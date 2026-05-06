@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+.venv/
+venv/
+
+# Local environment
+.env
+.env.*
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+# Dataset policy
+# Keep large research data and generated curation artifacts local.
+# Commit code, specs, docs, and tests; do not commit raw images, raw JSON batches,
+# generated crops, partition manifests, operation logs, or dataset zip exports.
+*.zip
+batch_*/images/
+batch_*/json/
+batch_*/class_crops/
+batch_*/curation/

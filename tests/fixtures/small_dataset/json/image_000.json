@@ -1,0 +1,19 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "imagePath": "image_000.ppm",
+  "imageHeight": 4,
+  "imageWidth": 4,
+  "fixture_meta": "preserve",
+  "shapes": [
+    {
+      "label": "Backpack",
+      "points": [[0, 0], [3, 3]],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "extra_field": "keep"
+    }
+  ]
+}
