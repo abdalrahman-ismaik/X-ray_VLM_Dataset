@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_BATCH_NAME = "batch_1"
+DEFAULT_DATASET_NAME = "dataset"
 DEFAULT_PARTITION_SIZE = 10_000
 
 
@@ -33,4 +33,4 @@ class DatasetConfig:
 
 def default_dataset_root(project_root: str | Path | None = None) -> Path:
     base = Path(project_root) if project_root is not None else Path.cwd()
-    return base / DEFAULT_BATCH_NAME
+    return base / DEFAULT_DATASET_NAME

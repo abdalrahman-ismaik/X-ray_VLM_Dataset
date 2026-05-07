@@ -19,6 +19,7 @@ dev = [
 
 [project.scripts]
 xray-curation = "xray_curation.cli:main"
+xray-curation-gui = "xray_curation.gui.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

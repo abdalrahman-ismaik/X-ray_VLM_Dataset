@@ -19,7 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dataset",
         default=None,
-        help="Optional dataset batch root, for example C:/path/to/batch_1.",
+        help="Optional dataset root, for example C:/path/to/dataset.",
     )
     args = parser.parse_args(argv)
     run_app(args.dataset)

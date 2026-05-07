@@ -25,7 +25,10 @@ Thumbs.db
 # Commit code, specs, docs, and tests; do not commit raw images, raw JSON batches,
 # generated crops, partition manifests, operation logs, or dataset zip exports.
 *.zip
+dataset/
+datasets/
 batch_*/images/
 batch_*/json/
 batch_*/class_crops/
 batch_*/curation/
+tests/fixtures/**/curation/

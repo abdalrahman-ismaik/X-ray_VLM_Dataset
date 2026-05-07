@@ -92,6 +92,10 @@ def read_dataset_manifest(dataset_root: str | Path) -> dict[str, Any]:
     return load_json(dataset_manifest_path(dataset_root))
 
 
+def read_partition_manifest(dataset_root: str | Path, partition_id: str) -> dict[str, Any]:
+    return load_json(partition_manifest_path(dataset_root, partition_id))
+
+
 def load_or_create_dataset_manifest(
     dataset_root: str | Path,
     partition_size: int = DEFAULT_PARTITION_SIZE,
@@ -118,6 +122,34 @@ def select_partition(
         **partition,
         "images": images,
     }
+
+
+def image_record_from_manifest(payload: dict[str, Any]) -> ImageRecord:
+    return ImageRecord(
+        image_id=str(payload["image_id"]),
+        image_path=Path(str(payload["image_path"])),
+        annotation_path=Path(str(payload["annotation_path"])),
+        ordinal=int(payload.get("ordinal", 0)),
+    )
+
+
+def list_partition_image_records(
+    dataset_root: str | Path,
+    partition_id: str,
+) -> list[ImageRecord]:
+    partition_path = partition_manifest_path(dataset_root, partition_id)
+    if partition_path.exists():
+        partition = load_json(partition_path)
+    else:
+        partition = select_partition(read_dataset_manifest(dataset_root), partition_id)
+    images = partition.get("images", [])
+    if not isinstance(images, list):
+        raise ValueError(f"Partition images must be a list: {partition_id}")
+    return [
+        image_record_from_manifest(image)
+        for image in images
+        if isinstance(image, dict)
+    ]
 
 
 def annotation_signature(annotation_path: str | Path) -> dict[str, Any]:

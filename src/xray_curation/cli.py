@@ -17,6 +17,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="xray-curation")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    gui_parser = subparsers.add_parser("gui", help="Launch the desktop curation GUI")
+    gui_parser.add_argument("--dataset", default=None)
+
     index_parser = subparsers.add_parser("index", help="Create partition manifests")
     index_parser.add_argument("--dataset", default=None)
     index_parser.add_argument("--partition-size", type=int, default=DEFAULT_PARTITION_SIZE)
@@ -30,6 +33,12 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     dataset = _dataset_arg(getattr(args, "dataset", None))
+
+    if args.command == "gui":
+        from xray_curation.gui.app import run_app
+
+        run_app(dataset)
+        return 0
 
     if args.command == "index":
         manifest = build_dataset_manifest(

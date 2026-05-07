@@ -3,7 +3,31 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from xray_curation.domain.operations import PendingChange
+from xray_curation.domain.operations import (
+    ANNOTATION_ADD,
+    ANNOTATION_DELETE,
+    ANNOTATION_RELABEL,
+    ANNOTATION_UPDATE_BOX,
+    PendingChange,
+)
+
+
+def _describe_change(change: PendingChange) -> str:
+    if change.operation == ANNOTATION_ADD:
+        return (
+            f"Add box: {change.payload.get('image_id', '')} | "
+            f"{change.payload.get('label', '')} | {change.target_id}"
+        )
+    if change.operation == ANNOTATION_UPDATE_BOX:
+        return f"Edit box: {change.payload.get('image_id', '')} | {change.target_id}"
+    if change.operation == ANNOTATION_RELABEL:
+        return (
+            f"Relabel box: {change.payload.get('image_id', '')} | "
+            f"{change.payload.get('label', '')} | {change.target_id}"
+        )
+    if change.operation == ANNOTATION_DELETE:
+        return f"Delete box: {change.payload.get('image_id', '')} | {change.target_id}"
+    return f"{change.operation}: {change.target_id}"
 
 
 class PendingChangesPanel(ttk.LabelFrame):
@@ -19,10 +43,7 @@ class PendingChangesPanel(ttk.LabelFrame):
     def set_changes(self, changes: list[PendingChange]) -> None:
         self.listbox.delete(0, tk.END)
         for change in changes:
-            self.listbox.insert(
-                tk.END,
-                f"{change.operation}: {change.target_id}",
-            )
+            self.listbox.insert(tk.END, _describe_change(change))
         if not changes:
             self.summary_var.set("No pending changes.")
             return

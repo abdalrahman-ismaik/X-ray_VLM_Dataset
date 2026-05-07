@@ -7,11 +7,22 @@
   "shapes": [
     {
       "label": "Laptop",
-      "points": [[0, 0], [3, 3]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          3,
+          3
+        ]
+      ],
       "group_id": null,
       "description": "",
       "shape_type": "rectangle",
-      "flags": {}
+      "flags": {
+        "curation_bbox_id": "bbox-7d90744cf657edcd"
+      }
     }
   ]
 }

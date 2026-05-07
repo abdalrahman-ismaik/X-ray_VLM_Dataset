@@ -1,0 +1,66 @@
+{
+  "version": "5.4.1",
+  "flags": {
+    "fixture_case": "annotation_editor_overlap_unknown_unsupported"
+  },
+  "imagePath": "image_000.ppm",
+  "imageHeight": 4,
+  "imageWidth": 4,
+  "fixture_meta": "preserve",
+  "shapes": [
+    {
+      "label": "Backpack",
+      "points": [
+        [0, 0],
+        [3, 3]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {
+        "curation_bbox_id": "bbox-overlap-a"
+      }
+    },
+    {
+      "label": "Legacy_Unknown",
+      "points": [
+        [1, 1],
+        [3, 3]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {
+        "curation_bbox_id": "bbox-overlap-b"
+      }
+    },
+    {
+      "label": "Belt",
+      "points": [
+        [0, 0],
+        [1, 0],
+        [1, 1],
+        [0, 1]
+      ],
+      "group_id": null,
+      "description": "Unsupported shape preserved by annotation editor services.",
+      "shape_type": "polygon",
+      "flags": {
+        "curation_bbox_id": "bbox-unsupported-polygon"
+      }
+    },
+    {
+      "label": "Box",
+      "points": [
+        [2, 2],
+        [2, 3]
+      ],
+      "group_id": null,
+      "description": "Invalid rectangle: zero width.",
+      "shape_type": "rectangle",
+      "flags": {
+        "curation_bbox_id": "bbox-invalid-zero-width"
+      }
+    }
+  ]
+}

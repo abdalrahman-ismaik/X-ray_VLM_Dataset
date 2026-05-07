@@ -90,6 +90,19 @@
 - **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
 - **FR-005**: System MUST [behavior, e.g., "log all security events"]
 
+### Constitution Alignment *(mandatory for curation GUI changes)*
+
+- **Core workflow parity**: If the feature changes GUI behavior, list whether
+  source-image browsing, bounding-box drawing, label assignment, box
+  selection/editing, deletion, save, and affected-crop refresh are preserved,
+  changed, or intentionally deferred.
+- **Data safety**: State how original images remain immutable and how annotation
+  JSON changes are staged, summarized, and saved.
+- **Partition scope**: State whether the feature operates on fixtures, a
+  selected partition, or an explicitly broader dataset scope.
+- **Label vocabulary**: State how approved PIDRay labels and unknown labels are
+  handled.
+
 *Example of marking unclear requirements:*
 
 - **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]

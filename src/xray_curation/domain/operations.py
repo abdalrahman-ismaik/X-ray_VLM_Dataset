@@ -4,6 +4,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+ANNOTATION_ADD = "annotation_add"
+ANNOTATION_UPDATE_BOX = "annotation_update_box"
+ANNOTATION_RELABEL = "annotation_relabel"
+ANNOTATION_DELETE = "annotation_delete"
+ANNOTATION_EDIT_OPERATIONS = frozenset(
+    {
+        ANNOTATION_ADD,
+        ANNOTATION_UPDATE_BOX,
+        ANNOTATION_RELABEL,
+        ANNOTATION_DELETE,
+    }
+)
+
 
 @dataclass(frozen=True)
 class DatasetPaths:

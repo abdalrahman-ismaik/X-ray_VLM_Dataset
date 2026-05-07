@@ -111,6 +111,29 @@ def update_crop(
     return crop
 
 
+def replace_image_crops(
+    manifest: dict[str, Any],
+    image_ids: set[str],
+    refreshed_crops: list[dict[str, Any]],
+    summary_updates: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    kept_crops = [
+        crop
+        for crop in crop_records(manifest)
+        if str(crop.get("image_id")) not in image_ids
+    ]
+    summary = dict(manifest.get("summary", {}))
+    summary.update(summary_updates or {})
+    all_crops = kept_crops + refreshed_crops
+    summary["crops_total"] = len(all_crops)
+    return {
+        "version": manifest.get("version", CROP_MANIFEST_VERSION),
+        "partition_id": manifest.get("partition_id", ""),
+        "summary": summary,
+        "crops": all_crops,
+    }
+
+
 def lookup_source_context(
     dataset_root: str | Path,
     partition_id: str,

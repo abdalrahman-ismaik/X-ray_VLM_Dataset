@@ -26,9 +26,9 @@ def run_tk_worker(
         try:
             result = work()
         except BaseException as exc:
-            root.after(0, lambda: on_error(exc))
+            root.after(0, lambda error=exc: on_error(error))
         else:
-            root.after(0, lambda: on_success(result))
+            root.after(0, lambda value=result: on_success(value))
 
     thread = Thread(target=runner, daemon=True)
     thread.start()

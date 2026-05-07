@@ -31,7 +31,24 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+The plan MUST verify these project gates from `.specify/memory/constitution.md`:
+
+- **Source data integrity**: Original images remain immutable; annotation JSON
+  changes are atomic, reviewable, and recoverable.
+- **Core workflow parity**: Legacy GUI reviewer workflows are preserved or
+  explicitly scoped as follow-up, including source-image browsing, bounding-box
+  drawing, label assignment, box selection/editing, deletion, save, and crop
+  refresh.
+- **Stable identity**: Crops and bounding boxes are linked through stable IDs,
+  not filenames, class folders, visual order, or rectangle index alone.
+- **Derived artifact reproducibility**: Crops, manifests, and partition state
+  are derived from annotations and can be regenerated.
+- **Responsive partitioned GUI**: GUI work defaults to a selected partition;
+  long operations report progress and do not block Tkinter.
+- **Testable services**: Dataset, annotation, crop, label, validation, and
+  operation logic are testable without launching the GUI.
+- **Controlled vocabulary**: PIDRay labels are centralized, displayed with
+  spaces, and unknown or ambiguous labels are reviewable.
 
 ## Project Structure
 

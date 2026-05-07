@@ -18,6 +18,19 @@ description: "Task list template for feature implementation"
 - **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
 - Include exact file paths in descriptions
 
+## Constitution-Driven Task Requirements
+
+For curation GUI work, tasks MUST preserve or explicitly defer legacy core
+workflows from `.specify/memory/constitution.md`: source-image browsing,
+bounding-box drawing, label assignment, box selection/editing, deletion, save,
+and affected-crop refresh. When any of these workflows change, include concrete
+implementation tasks, service tests, fixture/integration tests, and manual GUI
+smoke-test tasks for the changed behavior.
+
+Tasks MUST keep full-dataset scans and all-dataset crop generation out of normal
+test execution unless the user explicitly requests that scope. Use fixtures,
+synthetic manifests, or selected-partition state by default.
+
 ## Path Conventions
 
 - **Single project**: `src/`, `tests/` at repository root

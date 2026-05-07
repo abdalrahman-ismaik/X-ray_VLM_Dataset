@@ -6,7 +6,11 @@ import json
 from typing import Any
 
 from xray_curation.config import DatasetConfig
-from xray_curation.domain.operations import OperationResult, PendingChange
+from xray_curation.domain.operations import (
+    ANNOTATION_EDIT_OPERATIONS,
+    OperationResult,
+    PendingChange,
+)
 from xray_curation.services.annotation_store import stage_soft_delete_change
 from xray_curation.services.crop_manifest import query_crops, read_crop_manifest
 
@@ -59,6 +63,90 @@ def ensure_no_unsaved_changes(
         ),
         summary={"operation": operation, "pending_count": len(pending_changes)},
     )
+
+
+def annotation_edit_conflicts(
+    pending_changes: list[PendingChange],
+) -> dict[str, list[PendingChange]]:
+    by_target: dict[str, list[PendingChange]] = {}
+    for change in pending_changes:
+        if change.operation not in ANNOTATION_EDIT_OPERATIONS:
+            continue
+        image_id = str(change.payload.get("image_id", ""))
+        bbox_id = str(change.payload.get("bbox_id") or change.payload.get("temporary_bbox_id") or change.target_id)
+        target = f"{image_id}:{bbox_id}"
+        by_target.setdefault(target, []).append(change)
+    return {
+        target: changes
+        for target, changes in by_target.items()
+        if len({change.operation for change in changes}) > 1
+    }
+
+
+def validate_pending_change_conflicts(
+    pending_changes: list[PendingChange],
+) -> OperationResult:
+    conflicts = annotation_edit_conflicts(pending_changes)
+    if not conflicts:
+        return success_result(
+            operation="validate_pending_change_conflicts",
+            summary={"conflict_count": 0},
+        )
+    return failure_result(
+        operation="validate_pending_change_conflicts",
+        errors=tuple(
+            f"Conflicting pending edits for {target}: "
+            + ", ".join(change.operation for change in changes)
+            for target, changes in conflicts.items()
+        ),
+        summary={
+            "conflict_count": len(conflicts),
+            "conflicts": {
+                target: [change.change_id for change in changes]
+                for target, changes in conflicts.items()
+            },
+        },
+    )
+
+
+def summarize_pending_changes(pending_changes: list[PendingChange]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "total": len(pending_changes),
+        "by_operation": {},
+        "annotation_edit_count": 0,
+        "crop_edit_count": 0,
+    }
+    by_operation = summary["by_operation"]
+    for change in pending_changes:
+        by_operation[change.operation] = by_operation.get(change.operation, 0) + 1
+        if change.operation in ANNOTATION_EDIT_OPERATIONS:
+            summary["annotation_edit_count"] += 1
+        else:
+            summary["crop_edit_count"] += 1
+    return summary
+
+
+def summarize_commit_and_refresh(
+    commit_result: OperationResult,
+    refresh_result: OperationResult | None = None,
+) -> dict[str, Any]:
+    commit_summary = commit_result.summary
+    summary = {
+        "changes_applied": commit_summary.get("changes_applied", 0),
+        "files_written": commit_summary.get("files_written", 0),
+        "added_count": commit_summary.get("annotation_add_count", 0),
+        "coordinate_edited_count": commit_summary.get("annotation_update_box_count", 0),
+        "relabeled_count": commit_summary.get("annotation_relabel_count", 0),
+        "deleted_count": commit_summary.get("annotation_delete_count", 0),
+        "cancelled_count": 0,
+        "refreshed_count": 0,
+        "skipped_count": 0,
+    }
+    if refresh_result is not None:
+        refresh_summary = refresh_result.summary
+        summary["refreshed_count"] = refresh_summary.get("refreshed_image_count", 0)
+        summary["skipped_count"] = refresh_summary.get("skipped_image_count", 0)
+    return summary
 
 
 def detect_missing_crops(dataset_root, partition_id: str) -> OperationResult:

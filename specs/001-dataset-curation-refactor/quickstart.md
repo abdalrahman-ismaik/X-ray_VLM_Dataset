@@ -17,7 +17,7 @@ python -m venv .venv
 Expected current layout:
 
 ```text
-batch_1/
+dataset/
 ├── images/
 ├── json/
 └── curation/       # created by the app
@@ -26,7 +26,7 @@ batch_1/
 Run the dataset index preview:
 
 ```powershell
-.\.venv\Scripts\python.exe -m xray_curation.cli index --dataset batch_1 --preview
+.\.venv\Scripts\python.exe -m xray_curation.cli index --dataset dataset --preview
 ```
 
 Expected result:
@@ -50,7 +50,7 @@ Expected first screen:
 
 ## 4. Generate Crops for One Partition
 
-1. Select `batch_1`.
+1. Select `dataset`.
 2. Select a partition, for example `part-0001`.
 3. Choose `Generate/Resume Crops`.
 4. Keep working while progress updates appear.
@@ -58,7 +58,7 @@ Expected first screen:
 Expected result:
 
 - Only the selected partition is processed.
-- Crops and `crop_manifest.json` are created under `batch_1/curation/partitions/part-0001/`.
+- Crops and `crop_manifest.json` are created under `dataset/curation/partitions/part-0001/`.
 - The GUI does not require deleting existing crop folders to resume.
 
 ## 5. Browse and Correct Crops
@@ -120,7 +120,7 @@ The completed refactor can be validated without scanning the full dataset:
 python -m pytest tests\unit
 python -m pytest tests\integration
 python -m compileall -q src GUI_Dataset
-python GUI_Dataset\reviewProposals_gui.py --help
+python run_gui.py --help
 python GUI_Dataset\Add_NewClass.py --help
 python GUI_Dataset\missing_crops_detector.py --help
 python GUI_Dataset\Moved_crops_json_updation_utility.py --help
@@ -134,3 +134,4 @@ Expected results from the implementation pass:
 - Legacy wrappers: help text is shown and no hard-coded dataset path is required.
 
 The real dataset should only be used through an explicit selected partition, for example `part-0001`. Do not run crop generation across all partitions at once.
+

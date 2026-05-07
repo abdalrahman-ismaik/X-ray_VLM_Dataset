@@ -5,14 +5,25 @@ import os
 from pathlib import Path
 from typing import Any
 
-from xray_curation.domain.operations import OperationResult, PendingChange
+from xray_curation.domain.operations import (
+    ANNOTATION_ADD,
+    ANNOTATION_DELETE,
+    ANNOTATION_EDIT_OPERATIONS,
+    ANNOTATION_RELABEL,
+    ANNOTATION_UPDATE_BOX,
+    OperationResult,
+    PendingChange,
+)
 from xray_curation.domain.annotations import (
     BBOX_ID_FIELD,
     ensure_bbox_id,
     get_bbox_id,
+    is_valid_rectangle,
+    normalize_rectangle,
     rectangle_shapes,
     set_bbox_id,
 )
+from xray_curation.domain.labels import is_approved_label
 
 
 class AnnotationStoreError(RuntimeError):
@@ -140,7 +151,40 @@ def _shape_flags(shape: dict[str, Any]) -> dict[str, Any]:
     return flags
 
 
+def _shape_points(rectangle: tuple[int, int, int, int]) -> list[list[int]]:
+    return [[rectangle[0], rectangle[1]], [rectangle[2], rectangle[3]]]
+
+
+def _apply_annotation_add(annotation: dict[str, Any], change: PendingChange) -> str:
+    shapes = annotation.setdefault("shapes", [])
+    if not isinstance(shapes, list):
+        raise AnnotationStoreError("Annotation JSON 'shapes' field must be a list")
+    image_id = str(change.payload["image_id"])
+    label = str(change.payload["label"])
+    if not is_approved_label(label):
+        raise AnnotationStoreError(f"New boxes require an approved PIDRay label: {label}")
+    points = change.payload["points"]
+    rectangle = normalize_rectangle(((points[0], points[1]), (points[2], points[3])))
+    if not is_valid_rectangle(rectangle):
+        raise AnnotationStoreError("Rectangle must be at least 2x2 image pixels")
+    bbox_id = str(change.payload["temporary_bbox_id"])
+    shape = {
+        "label": label,
+        "points": _shape_points(rectangle),
+        "group_id": None,
+        "description": "",
+        "shape_type": "rectangle",
+        "flags": {},
+    }
+    set_bbox_id(shape, bbox_id)
+    shapes.append(shape)
+    return bbox_id
+
+
 def _apply_change(annotation: dict[str, Any], change: PendingChange) -> str:
+    if change.operation == ANNOTATION_ADD:
+        return _apply_annotation_add(annotation, change)
+
     image_id = str(change.payload["image_id"])
     bbox_id = str(change.payload["bbox_id"])
     shape = find_shape_by_bbox_id(annotation, image_id=image_id, bbox_id=bbox_id)
@@ -149,7 +193,31 @@ def _apply_change(annotation: dict[str, Any], change: PendingChange) -> str:
     set_bbox_id(shape, bbox_id)
     flags = _shape_flags(shape)
 
-    if change.operation in {"relabel", "move_group"}:
+    if change.operation == ANNOTATION_UPDATE_BOX:
+        points = change.payload["points"]
+        rectangle = normalize_rectangle(((points[0], points[1]), (points[2], points[3])))
+        if not is_valid_rectangle(rectangle):
+            raise AnnotationStoreError("Rectangle must be at least 2x2 image pixels")
+        shape["points"] = _shape_points(rectangle)
+    elif change.operation == ANNOTATION_RELABEL:
+        label = str(change.payload["label"])
+        if not is_approved_label(label):
+            raise AnnotationStoreError(f"Existing boxes require an approved PIDRay label: {label}")
+        shape["label"] = label
+        flags["curation_status"] = "active"
+    elif change.operation == ANNOTATION_DELETE:
+        shapes = annotation.get("shapes", [])
+        if not isinstance(shapes, list):
+            raise AnnotationStoreError("Annotation JSON 'shapes' field must be a list")
+        annotation["shapes"] = [
+            candidate
+            for candidate in shapes
+            if not (
+                isinstance(candidate, dict)
+                and get_bbox_id(candidate) == bbox_id
+            )
+        ]
+    elif change.operation in {"relabel", "move_group"}:
         shape["label"] = str(change.payload["label"])
         flags["curation_status"] = "active"
     elif change.operation == "rename":
@@ -172,6 +240,10 @@ def commit_pending_changes(pending_changes: list[PendingChange]) -> OperationRes
     errors: list[str] = []
     files_written = 0
     changes_applied = 0
+    annotation_add_count = 0
+    annotation_update_box_count = 0
+    annotation_relabel_count = 0
+    annotation_delete_count = 0
 
     for annotation_path, changes in grouped.items():
         if not changes:
@@ -187,18 +259,49 @@ def commit_pending_changes(pending_changes: list[PendingChange]) -> OperationRes
             for change in changes:
                 affected_ids.append(_apply_change(annotation, change))
                 changes_applied += 1
+                if change.operation == ANNOTATION_ADD:
+                    annotation_add_count += 1
+                elif change.operation == ANNOTATION_UPDATE_BOX:
+                    annotation_update_box_count += 1
+                elif change.operation == ANNOTATION_RELABEL:
+                    annotation_relabel_count += 1
+                elif change.operation == ANNOTATION_DELETE:
+                    annotation_delete_count += 1
             save_json_atomic(annotation_path, annotation)
             files_written += 1
         except AnnotationStoreError as exc:
             errors.append(str(exc))
 
+    summary = {
+        "changes_applied": changes_applied,
+        "files_written": files_written,
+    }
+    if annotation_add_count:
+        summary["annotation_add_count"] = annotation_add_count
+    if annotation_update_box_count:
+        summary["annotation_update_box_count"] = annotation_update_box_count
+    if annotation_relabel_count:
+        summary["annotation_relabel_count"] = annotation_relabel_count
+    if annotation_delete_count:
+        summary["annotation_delete_count"] = annotation_delete_count
+    affected_image_ids = sorted(
+        {
+            str(change.payload.get("image_id"))
+            for change in pending_changes
+            if change.operation in ANNOTATION_EDIT_OPERATIONS and change.payload.get("image_id")
+        }
+    )
+    if affected_image_ids:
+        summary["affected_image_ids"] = affected_image_ids
+
     return OperationResult(
         operation="commit_pending_changes",
         success=len(errors) == 0,
-        summary={
-            "changes_applied": changes_applied,
-            "files_written": files_written,
-        },
+        summary=summary,
         errors=tuple(errors),
         affected_ids=tuple(affected_ids),
     )
+
+
+def commit_shared_pending_changes(pending_changes: list[PendingChange]) -> OperationResult:
+    return commit_pending_changes(pending_changes)
