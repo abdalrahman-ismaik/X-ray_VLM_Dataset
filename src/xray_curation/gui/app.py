@@ -18,8 +18,28 @@ from xray_curation.services.crop_generator import (
 )
 from xray_curation.services.dataset_index import (
     build_dataset_manifest,
+    dataset_manifest_path,
+    read_dataset_manifest,
     summarize_partition_state,
 )
+
+
+def partition_values_from_manifest(manifest: dict) -> list[str]:
+    return [
+        f'{item["partition_id"]} ({item["image_count"]} images)'
+        for item in manifest.get("partitions", [])
+        if isinstance(item, dict)
+        and "partition_id" in item
+        and "image_count" in item
+    ]
+
+
+def partition_size_from_manifest(manifest: dict, fallback: int = DEFAULT_PARTITION_SIZE) -> int:
+    try:
+        size = int(manifest.get("partition_size", fallback))
+    except (TypeError, ValueError):
+        return fallback
+    return size if size > 0 else fallback
 
 
 class CurationApp(ttk.Frame):
@@ -30,7 +50,7 @@ class CurationApp(ttk.Frame):
         self.dataset_var = tk.StringVar(value=str(dataset_root or default_dataset_root()))
         self.partition_size_var = tk.IntVar(value=DEFAULT_PARTITION_SIZE)
         self.partition_var = tk.StringVar(value="")
-        self.status_var = tk.StringVar(value="Choose a dataset root and index partitions.")
+        self.status_var = tk.StringVar(value="Choose a dataset root. Existing indexes load automatically.")
         self.progress_var = tk.DoubleVar(value=0)
         self.progress_text_var = tk.StringVar(value="Idle")
         self.setup_summary_var = tk.StringVar(value="No partition selected.")
@@ -39,6 +59,7 @@ class CurationApp(ttk.Frame):
         self.action_buttons: list[ttk.Button] = []
         self.state = CurationState(dataset_root=Path(self.dataset_var.get()))
         self._build()
+        self.after_idle(self._try_load_existing_manifest)
 
     def _build(self) -> None:
         self.grid(sticky="nsew")
@@ -141,9 +162,13 @@ class CurationApp(ttk.Frame):
             self.setup_summary_var.set(
                 f"{dataset_name} | {partition_id} | partition size {self.partition_size_var.get()}"
             )
+        elif self.partitions:
+            self.setup_summary_var.set(
+                f"{dataset_name} | partition size {self.partition_size_var.get()} | select a partition"
+            )
         else:
             self.setup_summary_var.set(
-                f"{dataset_name} | partition size {self.partition_size_var.get()} | index dataset to begin"
+                f"{dataset_name} | partition size {self.partition_size_var.get()} | index once if no saved index exists"
             )
 
     def _build_statusbar(self) -> None:
@@ -173,6 +198,71 @@ class CurationApp(ttk.Frame):
             self.state.dataset_root = Path(selected)
             self._set_setup_collapsed(False)
             self._update_setup_summary()
+            self._try_load_existing_manifest()
+
+    def _clear_loaded_manifest(self, message: str) -> None:
+        self.partitions = []
+        self.partition_combo["values"] = ()
+        self.partition_var.set("")
+        self.state.partition_id = None
+        self.state.selected_crop_id = None
+        self.state.selected_image_id = None
+        self.state.active_source_image_id = None
+        self.state.selected_bbox_id = None
+        self.state.crop_manifest = None
+        self.state.pending_changes.clear()
+        if hasattr(self, "crop_browser"):
+            self.crop_browser.clear(message)
+        self.status_var.set(message)
+        self.progress_text_var.set("Ready")
+        self.progress_var.set(0)
+        self._update_setup_summary()
+
+    def _apply_dataset_manifest(self, manifest: dict, message: str) -> None:
+        self.partitions = list(manifest.get("partitions", []))
+        self.partition_size_var.set(partition_size_from_manifest(manifest, self.partition_size_var.get()))
+        values = partition_values_from_manifest(manifest)
+        self.partition_combo["values"] = values
+        if not values:
+            self.partition_var.set("")
+            self._clear_loaded_manifest("Saved dataset index has no partitions. Click Index Dataset to rebuild it.")
+            return
+
+        current_partition_id = self._selected_partition_id()
+        selected_index = 0
+        if current_partition_id:
+            for index, value in enumerate(values):
+                if value.startswith(f"{current_partition_id} "):
+                    selected_index = index
+                    break
+        self.partition_combo.current(selected_index)
+        self.partition_var.set(values[selected_index])
+        self._load_selected_partition()
+        self.status_var.set(message)
+        self.progress_text_var.set("Ready")
+        self.progress_var.set(100)
+        self._update_setup_summary()
+
+    def _try_load_existing_manifest(self) -> None:
+        dataset = Path(self.dataset_var.get())
+        self.state.dataset_root = dataset
+        path = dataset_manifest_path(dataset)
+        if not path.exists():
+            self._clear_loaded_manifest(
+                "No saved dataset index found. Click Index Dataset once for this dataset root."
+            )
+            return
+        try:
+            manifest = read_dataset_manifest(dataset)
+        except Exception as exc:
+            self._clear_loaded_manifest(
+                f"Could not load saved dataset index: {exc}. Click Index Dataset to rebuild it."
+            )
+            return
+        self._apply_dataset_manifest(
+            manifest,
+            f"Loaded saved dataset index from {path}.",
+        )
 
     def _set_busy(self, message: str, indeterminate: bool = False) -> None:
         self.status_var.set(message)
@@ -231,19 +321,13 @@ class CurationApp(ttk.Frame):
             return build_dataset_manifest(dataset, partition_size=size, persist=True)
 
         def on_success(manifest):
-            self.partitions = list(manifest["partitions"])
-            values = [
-                f'{item["partition_id"]} ({item["image_count"]} images)'
-                for item in self.partitions
-            ]
-            self.partition_combo["values"] = values
-            if values:
-                self.partition_combo.current(0)
-                self.partition_var.set(values[0])
-                self._load_selected_partition()
-            self._update_setup_summary()
+            partition_count = len(manifest.get("partitions", []))
+            self._apply_dataset_manifest(
+                manifest,
+                f'Indexed {manifest["image_count"]} images into {partition_count} partitions.',
+            )
             self._clear_busy(
-                f'Indexed {manifest["image_count"]} images into {len(values)} partitions.'
+                f'Indexed {manifest["image_count"]} images into {partition_count} partitions.'
             )
 
         def on_error(exc):

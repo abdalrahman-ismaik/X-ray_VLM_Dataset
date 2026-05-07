@@ -5,6 +5,12 @@ from pathlib import Path
 import pytest
 
 from xray_curation.domain.annotations import normalize_clamped_rectangle
+from xray_curation.gui.annotation_editor import (
+    clamp_viewer_pan,
+    clamp_viewer_zoom,
+    viewer_pan_for_anchor,
+    zoomed_canvas_transform,
+)
 from xray_curation.services.annotation_editor import (
     CanvasTransform,
     EditableBoundingBox,
@@ -37,6 +43,34 @@ def test_canvas_transform_fits_and_round_trips_points() -> None:
     assert transform.offset_y == pytest.approx(50.0)
     assert transform.image_to_canvas_point(25, 10) == pytest.approx((50, 70))
     assert transform.canvas_to_image_point(50, 70) == pytest.approx((25, 10))
+
+
+def test_zoomed_canvas_transform_preserves_coordinate_round_trip() -> None:
+    transform = zoomed_canvas_transform((100, 50), (200, 200), 2.0, (0, 0))
+
+    assert transform.scale == pytest.approx(4.0)
+    canvas_point = transform.image_to_canvas_point(25, 10)
+    assert transform.canvas_to_image_point(*canvas_point) == pytest.approx((25, 10))
+
+
+def test_viewer_pan_is_clamped_to_zoomed_image_bounds() -> None:
+    assert clamp_viewer_zoom(20) == pytest.approx(8.0)
+    assert clamp_viewer_zoom(0.1) == pytest.approx(1.0)
+
+    pan = clamp_viewer_pan((100, 50), (200, 200), 3.0, (999, -999))
+    transform = zoomed_canvas_transform((100, 50), (200, 200), 3.0, pan)
+
+    assert 200 - (100 * transform.scale) <= transform.offset_x <= 0
+    assert 200 - (50 * transform.scale) <= transform.offset_y <= 0
+
+
+def test_viewer_pan_for_anchor_keeps_cursor_point_stable() -> None:
+    image_point = (40, 20)
+    canvas_point = (80, 80)
+    pan = viewer_pan_for_anchor((100, 50), (200, 200), 2.0, image_point, canvas_point)
+    transform = zoomed_canvas_transform((100, 50), (200, 200), 2.0, pan)
+
+    assert transform.image_to_canvas_point(*image_point) == pytest.approx(canvas_point)
 
 
 def test_normalize_clamped_rectangle_clamps_to_image_bounds() -> None:
@@ -77,6 +111,36 @@ def test_hit_test_boxes_uses_shape_order_and_cycles_repeated_clicks() -> None:
     assert second == "bbox-b"
     assert third == "bbox-a"
     assert hit_test_boxes(context, (99, 99)) is None
+
+
+def test_hit_test_boxes_prefers_smaller_box_inside_larger_box() -> None:
+    context = _context(
+        (
+            EditableBoundingBox("bbox-large", 0, "Backpack", (0, 0, 90, 45)),
+            EditableBoundingBox("bbox-small", 1, "Belt", (10, 10, 20, 20)),
+            EditableBoundingBox("bbox-medium", 2, "Box", (5, 5, 30, 30)),
+        )
+    )
+
+    first = hit_test_boxes(context, (15, 15))
+    second = hit_test_boxes(
+        context,
+        (15, 15),
+        previous_click_point=(15, 15),
+        previous_selected_bbox_id=first,
+        repeat_tolerance=4,
+    )
+    third = hit_test_boxes(
+        context,
+        (15, 15),
+        previous_click_point=(15, 15),
+        previous_selected_bbox_id=second,
+        repeat_tolerance=4,
+    )
+
+    assert first == "bbox-small"
+    assert second == "bbox-medium"
+    assert third == "bbox-large"
 
 
 @pytest.mark.parametrize(

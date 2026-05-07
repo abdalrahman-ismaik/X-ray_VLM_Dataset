@@ -16,7 +16,7 @@ from xray_curation.domain.operations import (
 )
 from xray_curation.domain.annotations import (
     BBOX_ID_FIELD,
-    ensure_bbox_id,
+    bbox_id_from_shape,
     get_bbox_id,
     is_valid_rectangle,
     normalize_rectangle,
@@ -57,12 +57,25 @@ def save_json_atomic(path: str | Path, data: dict[str, Any]) -> None:
 
 def assign_missing_bbox_ids(annotation: dict[str, Any], image_id: str) -> list[str]:
     assigned: list[str] = []
+    seen: set[str] = set()
     for _, shape in rectangle_shapes(annotation, image_id, assign_ids=False):
         before = get_bbox_id(shape)
-        bbox_id = ensure_bbox_id(shape, image_id)
-        if before is None:
+        base_id = before or bbox_id_from_shape(image_id, shape)
+        bbox_id = _unique_bbox_id(base_id, seen)
+        if before != bbox_id:
+            set_bbox_id(shape, bbox_id)
             assigned.append(bbox_id)
+        seen.add(bbox_id)
     return assigned
+
+
+def _unique_bbox_id(base_id: str, seen: set[str]) -> str:
+    if base_id not in seen:
+        return base_id
+    suffix = 2
+    while f"{base_id}-{suffix}" in seen:
+        suffix += 1
+    return f"{base_id}-{suffix}"
 
 
 def load_annotation(

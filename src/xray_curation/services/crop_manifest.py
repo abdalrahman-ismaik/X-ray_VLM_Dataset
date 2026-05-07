@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+import shutil
 from typing import Any
 
 from xray_curation.domain.operations import CropRecord, OperationResult
@@ -15,14 +17,38 @@ from xray_curation.services.annotation_store import (
 from xray_curation.services.dataset_index import partition_dir
 
 CROP_MANIFEST_VERSION = 1
+SOFT_DELETED_FOLDER = "_soft_deleted"
 
 
 class CropManifestError(RuntimeError):
     pass
 
 
+def class_folder_name(label: str | None) -> str:
+    name = re.sub(r'[<>:"/\\|?*]', " ", str(label or "").strip())
+    name = re.sub(r"\s+", " ", name).strip()
+    return name or "_unlabeled"
+
+
+def crop_file_path(
+    crop_dir: str | Path,
+    label: str | None,
+    crop_id: str,
+    status: str = "active",
+) -> Path:
+    root = Path(crop_dir)
+    class_folder = class_folder_name(label)
+    if status == "soft_deleted":
+        return root / SOFT_DELETED_FOLDER / class_folder / f"{crop_id}.png"
+    return root / class_folder / f"{crop_id}.png"
+
+
 def crop_manifest_path(dataset_root: str | Path, partition_id: str) -> Path:
     return partition_dir(dataset_root, partition_id) / "crop_manifest.json"
+
+
+def crop_root_dir(dataset_root: str | Path, partition_id: str) -> Path:
+    return partition_dir(dataset_root, partition_id) / "crops"
 
 
 def build_crop_manifest(
@@ -64,6 +90,17 @@ def find_crop(manifest: dict[str, Any], crop_id: str) -> dict[str, Any]:
         if crop.get("crop_id") == crop_id:
             return crop
     raise CropManifestError(f"Crop not found: {crop_id}")
+
+
+def find_crop_for_bbox(
+    manifest: dict[str, Any],
+    image_id: str,
+    bbox_id: str,
+) -> dict[str, Any] | None:
+    for crop in crop_records(manifest):
+        if str(crop.get("image_id")) == image_id and str(crop.get("bbox_id")) == bbox_id:
+            return crop
+    return None
 
 
 def query_crops(
@@ -109,6 +146,39 @@ def update_crop(
     crop = find_crop(manifest, crop_id)
     crop.update(updates)
     return crop
+
+
+def _remove_empty_class_dirs(path: Path, crop_root: Path) -> None:
+    current = path
+    while current != crop_root and crop_root in current.parents:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+def relocate_crop_file(
+    dataset_root: str | Path,
+    partition_id: str,
+    crop: dict[str, Any],
+    label: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    crop_root = crop_root_dir(dataset_root, partition_id)
+    target_label = label if label is not None else str(crop.get("label", ""))
+    target_status = status if status is not None else str(crop.get("status", "active"))
+    target_path = crop_file_path(crop_root, target_label, str(crop["crop_id"]), target_status)
+    old_path = Path(str(crop.get("crop_path", "")))
+    if old_path == target_path:
+        return {"crop_path": str(target_path)}
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    if old_path.is_file():
+        if target_path.exists():
+            target_path.unlink()
+        shutil.move(str(old_path), str(target_path))
+        _remove_empty_class_dirs(old_path.parent, crop_root)
+    return {"crop_path": str(target_path)}
 
 
 def replace_image_crops(

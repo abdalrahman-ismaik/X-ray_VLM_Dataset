@@ -40,3 +40,43 @@ def test_bbox_id_survives_shape_reorder():
     assert {
         shape["flags"][BBOX_ID_FIELD] for shape in annotation["shapes"]
     } == set(assigned)
+
+
+def test_duplicate_rectangle_geometry_gets_unique_bbox_ids():
+    annotation = {
+        "shapes": [
+            {"label": "Backpack", "shape_type": "rectangle", "points": [[0, 0], [3, 3]], "flags": {}},
+            {"label": "Belt", "shape_type": "rectangle", "points": [[0, 0], [3, 3]], "flags": {}},
+        ]
+    }
+
+    assigned = assign_missing_bbox_ids(annotation, image_id="image_x")
+    bbox_ids = [shape["flags"][BBOX_ID_FIELD] for shape in annotation["shapes"]]
+
+    assert len(set(bbox_ids)) == 2
+    assert bbox_ids == assigned
+
+
+def test_duplicate_existing_bbox_ids_are_repaired():
+    annotation = {
+        "shapes": [
+            {
+                "label": "Backpack",
+                "shape_type": "rectangle",
+                "points": [[0, 0], [3, 3]],
+                "flags": {BBOX_ID_FIELD: "bbox-existing"},
+            },
+            {
+                "label": "Belt",
+                "shape_type": "rectangle",
+                "points": [[1, 1], [4, 4]],
+                "flags": {BBOX_ID_FIELD: "bbox-existing"},
+            },
+        ]
+    }
+
+    repaired = assign_missing_bbox_ids(annotation, image_id="image_x")
+    bbox_ids = [shape["flags"][BBOX_ID_FIELD] for shape in annotation["shapes"]]
+
+    assert bbox_ids == ["bbox-existing", "bbox-existing-2"]
+    assert repaired == ["bbox-existing-2"]

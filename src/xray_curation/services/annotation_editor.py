@@ -462,6 +462,10 @@ def _point_in_rect(point: tuple[float, float], rect: tuple[int, int, int, int]) 
     return left <= x <= right and top <= y <= bottom
 
 
+def _box_area(box: EditableBoundingBox) -> int:
+    return max(0, box.points[2] - box.points[0]) * max(0, box.points[3] - box.points[1])
+
+
 def _distance_sq(
     first: tuple[float, float],
     second: tuple[float, float],
@@ -480,7 +484,7 @@ def hit_test_boxes(
 ) -> str | None:
     hits = [
         box
-        for box in sorted(context.boxes, key=lambda item: item.shape_index)
+        for box in sorted(context.boxes, key=lambda item: (_box_area(item), item.shape_index))
         if _point_in_rect(image_point, box.points)
     ]
     if not hits:

@@ -10,7 +10,9 @@ from xray_curation.domain.operations import CropRecord, OperationResult
 from xray_curation.services.annotation_store import load_annotation
 from xray_curation.services.crop_manifest import (
     build_crop_manifest,
+    crop_file_path,
     crop_manifest_path,
+    crop_records as manifest_crop_records,
     read_crop_manifest,
     replace_image_crops,
     write_crop_manifest,
@@ -83,11 +85,14 @@ def _generate_crop_records_for_images(
                 bbox_id = get_bbox_id(shape)
                 if bbox_id is None:
                     continue
+                label = str(shape.get("label", ""))
+                status = str(shape.get("flags", {}).get("curation_status", CROP_STATUS_ACTIVE))
                 crop_id = crop_id_for_bbox(image_id, bbox_id)
-                crop_path = crop_dir / f"{crop_id}.png"
+                crop_path = crop_file_path(crop_dir, label, crop_id, status)
                 if crop_path.exists() and not overwrite:
                     crops_skipped += 1
                 else:
+                    crop_path.parent.mkdir(parents=True, exist_ok=True)
                     box = _clamp_box(normalize_rectangle(shape["points"]), width, height, padding)
                     image.crop(box).save(crop_path)
                     crops_written += 1
@@ -96,11 +101,11 @@ def _generate_crop_records_for_images(
                         crop_id=crop_id,
                         bbox_id=bbox_id,
                         image_id=image_id,
-                        label=str(shape.get("label", "")),
+                        label=label,
                         crop_path=crop_path,
                         source_image_path=image_path,
                         annotation_path=annotation_path,
-                        status=str(shape.get("flags", {}).get("curation_status", CROP_STATUS_ACTIVE)),
+                        status=status,
                     )
                 )
         if progress_callback:
@@ -317,6 +322,15 @@ def refresh_affected_image_crops(
     )
     refreshed_crops = [record.to_manifest() for record in crop_records]
     existing_manifest = read_crop_manifest(config.root, partition_id)
+    stale_paths = {
+        Path(str(crop.get("crop_path", "")))
+        for crop in manifest_crop_records(existing_manifest)
+        if str(crop.get("image_id")) in selected_ids
+    }
+    refreshed_paths = {Path(str(crop.get("crop_path", ""))) for crop in refreshed_crops}
+    for stale_path in stale_paths - refreshed_paths:
+        if stale_path.is_file():
+            stale_path.unlink()
     summary = {
         "partition_id": partition_id,
         "mode": "affected_images",
