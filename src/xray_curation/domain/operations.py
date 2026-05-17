@@ -81,9 +81,10 @@ class CropRecord:
     source_image_path: Path
     annotation_path: Path
     status: str = "active"
+    display_name: str | None = None
 
     def to_manifest(self) -> dict[str, Any]:
-        return {
+        payload = {
             "crop_id": self.crop_id,
             "bbox_id": self.bbox_id,
             "image_id": self.image_id,
@@ -93,6 +94,9 @@ class CropRecord:
             "annotation_path": str(self.annotation_path),
             "status": self.status,
         }
+        if self.display_name:
+            payload["display_name"] = self.display_name
+        return payload
 
 
 @dataclass(frozen=True)

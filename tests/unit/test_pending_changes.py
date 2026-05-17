@@ -50,7 +50,11 @@ def test_commit_relabel_rename_move_soft_delete_and_restore(small_dataset):
     result = commit_pending_changes(pending)
 
     assert result.success is True
-    assert result.summary == {"changes_applied": 5, "files_written": 1}
+    assert result.summary == {
+        "changes_applied": 5,
+        "files_written": 1,
+        "affected_image_ids": [crop["image_id"]],
+    }
 
     annotation = load_json(crop["annotation_path"])
     shape = annotation["shapes"][0]
@@ -58,3 +62,13 @@ def test_commit_relabel_rename_move_soft_delete_and_restore(small_dataset):
     assert shape["flags"]["curation_display_name"] == "reviewed crop"
     assert shape["flags"]["curation_status"] == "active"
     assert shape["flags"][BBOX_ID_FIELD] == crop["bbox_id"]
+
+
+def test_commit_crop_level_change_reports_affected_image_for_refresh(small_dataset):
+    crop = _first_crop(small_dataset)
+    pending = [stage_relabel_change(crop, "Wallet")]
+
+    result = commit_pending_changes(pending)
+
+    assert result.success is True
+    assert result.summary["affected_image_ids"] == [crop["image_id"]]

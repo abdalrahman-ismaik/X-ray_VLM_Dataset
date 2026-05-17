@@ -1,7 +1,11 @@
 from xray_curation.gui.crop_browser import (
     browser_card_size,
     browser_grid_column_count,
+    browser_page_count,
+    browser_page_for_item_index,
+    browser_page_slice,
     browser_grid_position,
+    clamp_browser_page,
     crop_id_after_navigation,
     crop_row_to_select_after_refresh,
     crops_for_active_image,
@@ -39,6 +43,30 @@ def test_browser_card_size_zoom_changes_grid_density() -> None:
         600,
         card_width=small_width,
     )
+
+
+def test_browser_page_count_keeps_120_items_per_page() -> None:
+    assert browser_page_count(0) == 0
+    assert browser_page_count(120) == 1
+    assert browser_page_count(121) == 2
+    assert browser_page_count(240) == 2
+    assert browser_page_count(241) == 3
+
+
+def test_browser_page_slice_returns_current_page_bounds() -> None:
+    assert browser_page_slice(0, 241) == (0, 120)
+    assert browser_page_slice(1, 241) == (120, 240)
+    assert browser_page_slice(2, 241) == (240, 241)
+
+
+def test_browser_page_helpers_clamp_and_find_item_page() -> None:
+    assert clamp_browser_page(-3, 241) == 0
+    assert clamp_browser_page(9, 241) == 2
+    assert browser_page_for_item_index(0, 241) == 0
+    assert browser_page_for_item_index(119, 241) == 0
+    assert browser_page_for_item_index(120, 241) == 1
+    assert browser_page_for_item_index(240, 241) == 2
+    assert browser_page_for_item_index(241, 241) is None
 
 
 def test_crop_row_to_select_keeps_previous_visible_crop() -> None:

@@ -301,7 +301,7 @@ def commit_pending_changes(pending_changes: list[PendingChange]) -> OperationRes
         {
             str(change.payload.get("image_id"))
             for change in pending_changes
-            if change.operation in ANNOTATION_EDIT_OPERATIONS and change.payload.get("image_id")
+            if change.payload.get("image_id")
         }
     )
     if affected_image_ids:

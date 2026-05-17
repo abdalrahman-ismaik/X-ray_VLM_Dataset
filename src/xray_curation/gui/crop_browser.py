@@ -56,7 +56,7 @@ from xray_curation.services.validation import (
 
 ALL_CLASSES = "All Classes"
 ALL_STATUS = "All"
-THUMBNAIL_LIMIT = 120
+THUMBNAIL_PAGE_SIZE = 120
 THUMBNAIL_CARD_WIDTH = 132
 THUMBNAIL_CARD_HEIGHT = 112
 THUMBNAIL_GRID_PADDING = 10
@@ -205,6 +205,46 @@ def browser_card_size(
     return max(88, round(base_width * scale)), max(82, round(base_height * scale))
 
 
+def browser_page_count(total_items: int, page_size: int = THUMBNAIL_PAGE_SIZE) -> int:
+    if total_items <= 0:
+        return 0
+    return (total_items + max(1, page_size) - 1) // max(1, page_size)
+
+
+def clamp_browser_page(
+    page_index: int,
+    total_items: int,
+    page_size: int = THUMBNAIL_PAGE_SIZE,
+) -> int:
+    page_count = browser_page_count(total_items, page_size)
+    if page_count == 0:
+        return 0
+    return max(0, min(page_index, page_count - 1))
+
+
+def browser_page_slice(
+    page_index: int,
+    total_items: int,
+    page_size: int = THUMBNAIL_PAGE_SIZE,
+) -> tuple[int, int]:
+    if total_items <= 0:
+        return 0, 0
+    page_index = clamp_browser_page(page_index, total_items, page_size)
+    start = page_index * max(1, page_size)
+    end = min(total_items, start + max(1, page_size))
+    return start, end
+
+
+def browser_page_for_item_index(
+    item_index: int | None,
+    total_items: int,
+    page_size: int = THUMBNAIL_PAGE_SIZE,
+) -> int | None:
+    if item_index is None or item_index < 0 or item_index >= total_items:
+        return None
+    return item_index // max(1, page_size)
+
+
 class CropBrowser(ttk.Frame):
     def __init__(self, master, state: CurationState) -> None:
         super().__init__(master, padding=(0, 8, 0, 0))
@@ -216,16 +256,18 @@ class CropBrowser(ttk.Frame):
         self.browser_selection_var = tk.StringVar(value="No browser item selected.")
         self.browser_zoom_var = tk.IntVar(value=100)
         self.browser_zoom_text_var = tk.StringVar(value="100%")
+        self.browser_page_var = tk.StringVar(value="Page 0 of 0")
         self.filtered_crops: list[dict] = []
         self.navigation_crops: list[dict] = []
         self._selected_crop_preview: dict | None = None
         self._crop_preview_image: Image.Image | None = None
         self._crop_preview_photo = None
+        self._browser_all_items: list[dict] = []
         self._thumbnail_items: list[dict] = []
         self._thumbnail_photos: list[ImageTk.PhotoImage] = []
         self._thumbnail_hitboxes: list[tuple[int, int, int, int, dict]] = []
         self._browser_selected_item_ids: set[str] = set()
-        self._browser_total_count = 0
+        self._browser_page_index = 0
         self._tree_crop_ids: dict[str, str] = {}
         self._navigation_anchor_crop_id: str | None = None
         self._build()
@@ -307,7 +349,7 @@ class CropBrowser(ttk.Frame):
         self.browser_tab = ttk.Frame(self.workspace_tabs, padding=(0, 6, 6, 0))
         self.viewer_tab = ttk.Frame(self.workspace_tabs, padding=(0, 6, 6, 0))
         self.browser_tab.columnconfigure(0, weight=1)
-        self.browser_tab.rowconfigure(1, weight=1)
+        self.browser_tab.rowconfigure(2, weight=1)
         self.viewer_tab.columnconfigure(0, weight=1)
         self.viewer_tab.rowconfigure(0, weight=1)
 
@@ -352,8 +394,29 @@ class CropBrowser(ttk.Frame):
             padx=(8, 0),
         )
 
+        pagebar = ttk.Frame(parent)
+        pagebar.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        pagebar.columnconfigure(2, weight=1)
+        self.previous_page_button = ttk.Button(
+            pagebar,
+            text="Previous Page",
+            command=self._select_previous_browser_page,
+        )
+        self.previous_page_button.grid(row=0, column=0, sticky="w")
+        self.next_page_button = ttk.Button(
+            pagebar,
+            text="Next Page",
+            command=self._select_next_browser_page,
+        )
+        self.next_page_button.grid(row=0, column=1, sticky="w", padx=(4, 0))
+        ttk.Label(pagebar, textvariable=self.browser_page_var).grid(
+            row=0,
+            column=2,
+            sticky="e",
+        )
+
         grid_frame = ttk.Frame(parent)
-        grid_frame.grid(row=1, column=0, sticky="nsew")
+        grid_frame.grid(row=2, column=0, sticky="nsew")
         grid_frame.columnconfigure(0, weight=1)
         grid_frame.rowconfigure(0, weight=1)
 
@@ -407,11 +470,12 @@ class CropBrowser(ttk.Frame):
         self.navigation_crops = []
         self._selected_crop_preview = None
         self._crop_preview_image = None
+        self._browser_all_items = []
         self._thumbnail_items = []
         self._thumbnail_photos = []
         self._thumbnail_hitboxes = []
         self._browser_selected_item_ids = set()
-        self._browser_total_count = 0
+        self._browser_page_index = 0
         self._tree_crop_ids = {}
         self._navigation_anchor_crop_id = None
         self.tree.delete(*self.tree.get_children())
@@ -420,6 +484,7 @@ class CropBrowser(ttk.Frame):
         self._render_selected_crop_preview()
         self._render_thumbnail_grid()
         self._update_browser_selection_status()
+        self._update_browser_page_status()
         self.status_var_message.set(message)
         if hasattr(self, "tabs"):
             self.tabs.select(0)
@@ -606,7 +671,7 @@ class CropBrowser(ttk.Frame):
         self._set_selected_crop_preview(crop)
         row_id = self._tree_iid_for_crop(crop_id)
         if row_id is None:
-            self.refresh(select_first=False)
+            self.refresh(select_first=False, reset_browser_page=False)
             row_id = self._tree_iid_for_crop(crop_id)
         if row_id:
             self.tree.selection_set(row_id)
@@ -614,8 +679,10 @@ class CropBrowser(ttk.Frame):
             self.tree.see(row_id)
         else:
             self.tree.selection_remove(self.tree.selection())
+        page_changed = self._show_browser_item("crop", crop_id)
         self.status_var_message.set(f"Selected bbox {bbox_id}; showing linked crop {crop_id}.")
-        self._render_thumbnail_grid()
+        if not page_changed:
+            self._render_thumbnail_grid()
 
     def _render_selected_crop_preview(self) -> None:
         if not hasattr(self, "crop_preview_canvas"):
@@ -638,11 +705,10 @@ class CropBrowser(ttk.Frame):
             anchor=tk.CENTER,
         )
 
-    def _set_crop_thumbnails(self, crops: list[dict]) -> None:
+    def _set_crop_thumbnails(self, crops: list[dict], reset_page: bool = True) -> None:
         seen_ids: dict[str, int] = {}
         items = []
-        self._browser_total_count = len(crops)
-        for crop in crops[:THUMBNAIL_LIMIT]:
+        for crop in crops:
             crop_id = str(crop.get("crop_id", ""))
             row_id = unique_crop_row_id(crop_id, seen_ids)
             items.append(
@@ -656,16 +722,24 @@ class CropBrowser(ttk.Frame):
                     "status": str(crop.get("status", "active")),
                 }
             )
-        self._set_browser_items(items)
+        self._set_browser_items(
+            items,
+            reset_page=reset_page,
+            active_kind="crop",
+            active_id=self.state.selected_crop_id,
+        )
 
-    def _set_source_thumbnails(self, dataset_root: Path, partition_id: str) -> None:
+    def _set_source_thumbnails(
+        self,
+        dataset_root: Path,
+        partition_id: str,
+        reset_page: bool = True,
+    ) -> None:
         try:
             records = list(list_partition_source_images(dataset_root, partition_id))
         except Exception:
-            self._browser_total_count = 0
-            self._set_browser_items([])
+            self._set_browser_items([], reset_page=reset_page)
             return
-        self._browser_total_count = len(records)
         self._set_browser_items(
             [
                 {
@@ -677,16 +751,106 @@ class CropBrowser(ttk.Frame):
                     "path": str(record.image_path),
                     "status": "",
                 }
-                for record in records[:THUMBNAIL_LIMIT]
-            ]
+                for record in records
+            ],
+            reset_page=reset_page,
+            active_kind="source",
+            active_id=self.state.active_source_image_id,
         )
 
-    def _set_browser_items(self, items: list[dict]) -> None:
-        self._thumbnail_items = items
+    def _set_browser_items(
+        self,
+        items: list[dict],
+        reset_page: bool = True,
+        active_kind: str | None = None,
+        active_id: str | None = None,
+    ) -> None:
+        self._browser_all_items = items
         valid_ids = {str(item.get("item_id", "")) for item in items}
         self._browser_selected_item_ids.intersection_update(valid_ids)
+        if reset_page:
+            self._browser_page_index = 0
+        elif active_kind is not None and active_id:
+            active_page = self._browser_page_for_item(active_kind, active_id)
+            if active_page is not None:
+                self._browser_page_index = active_page
+            else:
+                self._browser_page_index = clamp_browser_page(
+                    self._browser_page_index,
+                    len(self._browser_all_items),
+                )
+        else:
+            self._browser_page_index = clamp_browser_page(
+                self._browser_page_index,
+                len(self._browser_all_items),
+            )
+        self._apply_browser_page()
+
+    def _browser_page_for_item(self, kind: str, record_id: str) -> int | None:
+        for index, item in enumerate(self._browser_all_items):
+            if item.get("kind") == kind and str(item.get("id", "")) == record_id:
+                return browser_page_for_item_index(index, len(self._browser_all_items))
+        return None
+
+    def _show_browser_item(self, kind: str, record_id: str) -> bool:
+        page_index = self._browser_page_for_item(kind, record_id)
+        if page_index is None:
+            return False
+        if page_index != self._browser_page_index:
+            self._browser_page_index = page_index
+            self._apply_browser_page()
+            return True
+        return False
+
+    def _apply_browser_page(self) -> None:
+        start, end = browser_page_slice(
+            self._browser_page_index,
+            len(self._browser_all_items),
+        )
+        self._browser_page_index = clamp_browser_page(
+            self._browser_page_index,
+            len(self._browser_all_items),
+        )
+        self._thumbnail_items = self._browser_all_items[start:end]
+        if hasattr(self, "thumbnail_canvas"):
+            self.thumbnail_canvas.yview_moveto(0)
         self._render_thumbnail_grid()
         self._update_browser_selection_status()
+        self._update_browser_page_status()
+
+    def _update_browser_page_status(self) -> None:
+        total = len(self._browser_all_items)
+        page_count = browser_page_count(total)
+        if page_count == 0:
+            self.browser_page_var.set("Page 0 of 0")
+        else:
+            start, end = browser_page_slice(self._browser_page_index, total)
+            self.browser_page_var.set(
+                f"Page {self._browser_page_index + 1} of {page_count} | "
+                f"{start + 1}-{end} of {total}"
+            )
+        if hasattr(self, "previous_page_button"):
+            if self._browser_page_index <= 0 or page_count <= 1:
+                self.previous_page_button.state(["disabled"])
+            else:
+                self.previous_page_button.state(["!disabled"])
+        if hasattr(self, "next_page_button"):
+            if page_count <= 1 or self._browser_page_index >= page_count - 1:
+                self.next_page_button.state(["disabled"])
+            else:
+                self.next_page_button.state(["!disabled"])
+
+    def _select_previous_browser_page(self) -> None:
+        if self._browser_page_index <= 0:
+            return
+        self._browser_page_index -= 1
+        self._apply_browser_page()
+
+    def _select_next_browser_page(self) -> None:
+        if self._browser_page_index >= browser_page_count(len(self._browser_all_items)) - 1:
+            return
+        self._browser_page_index += 1
+        self._apply_browser_page()
 
     def _render_thumbnail_grid(self) -> None:
         if not hasattr(self, "thumbnail_canvas"):
@@ -825,7 +989,7 @@ class CropBrowser(ttk.Frame):
                 image_id=item["image_id"],
             )
             self.workspace_tabs.select(self.viewer_tab)
-            self.refresh(select_first=False)
+            self.refresh(select_first=False, reset_browser_page=False)
             self._render_thumbnail_grid()
 
     def _open_crop_id(self, crop_id: str, open_viewer: bool = True) -> None:
@@ -852,7 +1016,7 @@ class CropBrowser(ttk.Frame):
                 self.state.selected_bbox_id = context.selected_bbox_id
         if open_viewer:
             self.workspace_tabs.select(self.viewer_tab)
-        self.refresh(select_first=False)
+        self.refresh(select_first=False, reset_browser_page=False)
         row_id = self._tree_iid_for_crop(crop_id)
         if row_id:
             self.tree.selection_set(row_id)
@@ -862,7 +1026,7 @@ class CropBrowser(ttk.Frame):
     def _open_selected_browser_item(self) -> None:
         selected_items = [
             item
-            for item in self._thumbnail_items
+            for item in self._browser_all_items
             if str(item.get("item_id", "")) in self._browser_selected_item_ids
         ]
         if not selected_items:
@@ -878,8 +1042,12 @@ class CropBrowser(ttk.Frame):
     def _update_browser_selection_status(self) -> None:
         selected_count = len(self._browser_selected_item_ids)
         shown_count = len(self._thumbnail_items)
-        total_count = max(self._browser_total_count, shown_count)
-        count_text = f"{shown_count} shown" if shown_count == total_count else f"{shown_count} of {total_count} shown"
+        total_count = len(self._browser_all_items)
+        count_text = (
+            f"{shown_count} on page"
+            if shown_count == total_count
+            else f"{shown_count} on page, {total_count} total"
+        )
         if selected_count:
             self.browser_selection_var.set(f"{selected_count} selected | {count_text}")
         elif shown_count:
@@ -892,7 +1060,7 @@ class CropBrowser(ttk.Frame):
             return []
         crops = []
         seen_crop_ids = set()
-        for item in self._thumbnail_items:
+        for item in self._browser_all_items:
             if str(item.get("item_id", "")) not in self._browser_selected_item_ids:
                 continue
             if item.get("kind") != "crop":
@@ -976,7 +1144,7 @@ class CropBrowser(ttk.Frame):
         self.status_var_message.set(f"Loaded crops for {partition_id}.")
         self.refresh()
 
-    def refresh(self, select_first: bool = True) -> None:
+    def refresh(self, select_first: bool = True, reset_browser_page: bool = True) -> None:
         previous_selection = self.state.selected_crop_id
         self.tree.delete(*self.tree.get_children())
         self._tree_crop_ids = {}
@@ -1026,7 +1194,7 @@ class CropBrowser(ttk.Frame):
                     crop.get("status", "active"),
                 ),
             )
-        self._set_crop_thumbnails(navigation_crops)
+        self._set_crop_thumbnails(navigation_crops, reset_page=reset_browser_page)
         if self.state.active_source_image_id:
             self.status_var_message.set(
                 f"Showing {len(crops)} item(s) in image {self.state.active_source_image_id}; "
@@ -1291,7 +1459,7 @@ class CropBrowser(ttk.Frame):
                 f"Saved {summary['changes_applied']} change(s); refreshed {summary['refreshed_count']} image(s)."
             )
             self.annotation_editor.reload_active_image(selected_bbox_id=selected_bbox_id)
-            self.refresh(select_first=False)
+            self.refresh(select_first=False, reset_browser_page=False)
 
         def on_error(exc):
             self.state.worker_status = "error"

@@ -26,14 +26,14 @@ The GUI opens maximized by default. The main review area is split into two works
 4. Select one partition, such as `part-0001`.
 5. Click `Generate Crops` for the selected partition, or `Resume` if crops already exist.
 6. After crops load, the Dataset and Partition controls collapse automatically to give the main review area more space.
-7. Use `Image Browser` to browse crop thumbnails, or source-image thumbnails before crops exist. Ctrl/Shift-click selects multiple browser items for bulk class moves, soft-delete, or restore.
+7. Use `Image Browser` to browse crop thumbnails, or source-image thumbnails before crops exist. Each browser page shows up to 120 thumbnails with vertical scrolling, and `Previous Page` / `Next Page` moves through the full filtered list. Ctrl/Shift-click selects multiple browser items for bulk class moves, soft-delete, or restore.
 8. Use the `Image Browser` zoom slider to enlarge thumbnails and reduce the number of images per row.
 9. Double-click an image in `Image Browser`, or select a crop from the table, to open `Image Viewer`.
 10. `Image Viewer` contains only the source image preview with Annotation Editor tools and the selected crop preview.
 11. Scroll over the source image to zoom; drag the zoomed background, middle mouse, or right mouse to pan around the image.
 12. In Annotation Editor mode, select boxes directly; when a selected bounding box has a generated crop, the crop preview updates to that linked crop. Cycle overlapping boxes with repeated clicks, use `Draw Box` with an approved PIDRay label, move or resize selected boxes, `Relabel Box`, `Delete Box`, or `Cancel Box Edit`.
 13. Review the shared `Pending` tab and click `Save Pending` when crop corrections and annotation edits are correct.
-14. Saves are atomic, and saved annotation edits trigger affected-image-only crop refresh when a crop manifest exists.
+14. Saves are atomic, and saved crop-level or annotation-editor edits trigger affected-image-only crop refresh when a crop manifest exists.
 
 For a safe test run without touching the main dataset:
 
@@ -94,6 +94,7 @@ The GUI now includes a crop browser and viewer workspace with:
 - class, status, and search filters
 - previous/next crop navigation
 - `Image Browser` grid with vertical scrolling
+- page controls that keep the browser responsive by showing up to 120 thumbnails per page
 - browser thumbnail zoom to enlarge previews and reduce images per row
 - multi-select crop thumbnails for bulk class move, soft-delete, and restore
 - `Image Viewer` with a large source image and Annotation Editor tools
@@ -159,7 +160,7 @@ dataset/curation/
       crops/
 ```
 
-When annotations change after crops were generated, the app can refresh only affected images instead of rebuilding the whole partition.
+When annotations change after crops were generated, the app can refresh only affected images instead of rebuilding the whole partition. Refresh operations also remove stale crop files from old class/status folders when labels or soft-delete status changed, so the folder view stays aligned with saved annotations and the crop manifest.
 
 ### Approved PIDRay Labels
 
@@ -260,16 +261,16 @@ Use `Delete Box` in the Annotation Editor only when the bounding box should be r
 
 `Save Pending` applies all staged changes together:
 
-- Crop `Relabel` / `Move Group`: updates the source box label and the crop manifest label.
+- Crop `Relabel` / `Move Group`: updates the source box label, crop manifest label, and active class folder.
 - Relabeled crop files move to the matching `crops/<New Class Label>/` folder after saving.
-- `Rename`: stores a review display name in annotation flags and the crop manifest.
-- `Soft Delete`: marks the box and crop manifest record as `soft_deleted`.
-- `Restore`: marks the box and crop manifest record as `active`.
+- `Rename`: stores a review display name in annotation flags and the crop manifest; the display name is preserved when affected crops are refreshed.
+- `Soft Delete`: marks the box and crop manifest record as `soft_deleted` and moves the crop file to `crops/_soft_deleted/<Class Label>/`.
+- `Restore`: marks the box and crop manifest record as `active` and moves the crop file back to the active class folder.
 - `Draw Box`: adds a new rectangular shape with a stable bbox ID.
 - Move/resize/relabel box: updates the selected rectangular shape.
 - `Delete Box`: removes the selected rectangular shape from the JSON.
 
-For annotation-editor edits, the GUI refreshes only the affected image crops after saving. It does not rebuild the full partition and never modifies original image files.
+For crop corrections and annotation-editor edits, the GUI refreshes only the affected image crops after saving. It does not rebuild the full partition and never modifies original image files. A later `Refresh Changed` should preserve saved labels, soft-delete state, restore state, and display names; it also deletes stale crop cache files left in old class folders for changed images.
 
 ### 1. Start The GUI
 
@@ -359,6 +360,7 @@ Use the crop browser to:
 - move with `Previous` and `Next`
 - inspect the source image and selected crop preview in `Image Viewer`
 - browse crop/source thumbnails in the vertical `Image Browser` grid
+- use `Previous Page` and `Next Page` to move through the full browser result set, with a maximum of 120 thumbnails rendered per page
 - use the browser zoom slider to enlarge thumbnails and reduce the number of images per row
 - Ctrl/Shift-click browser thumbnails to select multiple generated crops for bulk move, soft-delete, or restore
 - double-click a browser image to open it in `Image Viewer`
@@ -427,6 +429,8 @@ Use the top controls:
 
 Use `Rebuild Partition` only when you really want to recreate the selected partition crops.
 
+After `Save Pending`, normal crop-level changes are already written to the annotation JSON and refreshed for the affected image when a crop manifest exists. If you still click `Refresh Changed`, it should not undo saved work. It should only regenerate crops for images whose annotation signature differs from the saved partition state, remove stale cache files for those changed images, and keep saved labels/status/display names from the annotation JSON.
+
 ## Command-Line Utilities
 
 The legacy utility script names still work, but they now call the new services.
@@ -491,6 +495,7 @@ Implemented features include:
 - selected-partition crop generation
 - crop manifest creation
 - in-GUI crop browsing
+- paged thumbnail browsing with 120 thumbnails per page
 - source image and crop previews
 - stable crop/bounding-box identity
 - pending relabel, rename, move group, soft-delete, restore, and save
@@ -498,6 +503,7 @@ Implemented features include:
 - external moved-crop preview/apply
 - label standardization preview/apply
 - resume and refresh-changed workflow
+- affected-image refresh that preserves saved crop labels, statuses, and display names
 - append-only operation log
 - legacy script wrappers
 

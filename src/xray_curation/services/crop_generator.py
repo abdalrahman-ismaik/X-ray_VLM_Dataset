@@ -86,7 +86,12 @@ def _generate_crop_records_for_images(
                 if bbox_id is None:
                     continue
                 label = str(shape.get("label", ""))
-                status = str(shape.get("flags", {}).get("curation_status", CROP_STATUS_ACTIVE))
+                flags = shape.get("flags", {})
+                if not isinstance(flags, dict):
+                    flags = {}
+                status = str(flags.get("curation_status", CROP_STATUS_ACTIVE))
+                display_name_value = flags.get("curation_display_name")
+                display_name = str(display_name_value) if display_name_value else None
                 crop_id = crop_id_for_bbox(image_id, bbox_id)
                 crop_path = crop_file_path(crop_dir, label, crop_id, status)
                 if crop_path.exists() and not overwrite:
@@ -106,6 +111,7 @@ def _generate_crop_records_for_images(
                         source_image_path=image_path,
                         annotation_path=annotation_path,
                         status=status,
+                        display_name=display_name,
                     )
                 )
         if progress_callback:
@@ -204,13 +210,13 @@ def refresh_changed_crops_for_partition(
 
     try:
         existing_manifest = read_crop_manifest(config.root, partition_id)
-        existing_crops = [
-            crop
-            for crop in existing_manifest.get("crops", [])
-            if crop.get("image_id") not in changed_ids
-        ]
     except Exception:
-        existing_crops = []
+        existing_manifest = {
+            "version": 1,
+            "partition_id": partition_id,
+            "summary": {},
+            "crops": [],
+        }
 
     changed_images = [
         image_info
@@ -225,7 +231,17 @@ def refresh_changed_crops_for_partition(
         progress_callback=progress_callback,
     )
     refreshed_crops = [record.to_manifest() for record in crop_records]
-    all_crops = existing_crops + refreshed_crops
+    stale_paths = {
+        Path(str(crop.get("crop_path", "")))
+        for crop in manifest_crop_records(existing_manifest)
+        if str(crop.get("image_id")) in changed_ids
+    }
+    refreshed_paths = {Path(str(crop.get("crop_path", ""))) for crop in refreshed_crops}
+    stale_files_removed = 0
+    for stale_path in stale_paths - refreshed_paths:
+        if stale_path.is_file():
+            stale_path.unlink()
+            stale_files_removed += 1
 
     summary = {
         "partition_id": partition_id,
@@ -234,17 +250,18 @@ def refresh_changed_crops_for_partition(
         "changed_image_count": len(changed_images),
         "changed_image_ids": sorted(changed_ids),
         "images_processed": counters["images_processed"],
-        "crops_total": len(all_crops),
         "crops_written": counters["crops_written"],
         "crops_skipped": counters["crops_skipped"],
+        "stale_crop_files_removed": stale_files_removed,
         "crop_dir": str(crop_dir),
     }
-    crop_manifest = {
-        "version": 1,
-        "partition_id": partition_id,
-        "summary": summary,
-        "crops": all_crops,
-    }
+    crop_manifest = replace_image_crops(
+        existing_manifest,
+        changed_ids,
+        refreshed_crops,
+        summary_updates=summary,
+    )
+    summary["crops_total"] = crop_manifest["summary"]["crops_total"]
     manifest_path = write_crop_manifest(config.root, partition_id, crop_manifest)
     summary["crop_manifest_path"] = str(manifest_path)
 
