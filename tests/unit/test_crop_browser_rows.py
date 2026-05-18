@@ -1,10 +1,12 @@
 from xray_curation.gui.crop_browser import (
     browser_card_size,
     browser_grid_column_count,
+    browser_page_after_items_update,
     browser_page_count,
     browser_page_for_item_index,
     browser_page_slice,
     browser_grid_position,
+    centered_window_position,
     clamp_browser_page,
     crop_id_after_navigation,
     crop_row_to_select_after_refresh,
@@ -67,6 +69,62 @@ def test_browser_page_helpers_clamp_and_find_item_page() -> None:
     assert browser_page_for_item_index(120, 241) == 1
     assert browser_page_for_item_index(240, 241) == 2
     assert browser_page_for_item_index(241, 241) is None
+
+
+def test_browser_page_update_can_preserve_page_after_save_pending() -> None:
+    assert (
+        browser_page_after_items_update(
+            current_page_index=1,
+            total_items=360,
+            reset_page=False,
+            active_item_index=320,
+            focus_active_item=False,
+        )
+        == 1
+    )
+    assert (
+        browser_page_after_items_update(
+            current_page_index=1,
+            total_items=360,
+            reset_page=False,
+            active_item_index=320,
+            focus_active_item=True,
+        )
+        == 2
+    )
+    assert (
+        browser_page_after_items_update(
+            current_page_index=4,
+            total_items=121,
+            reset_page=False,
+            active_item_index=None,
+            focus_active_item=False,
+        )
+        == 1
+    )
+
+
+def test_centered_window_position_keeps_dialog_inside_screen() -> None:
+    assert centered_window_position(
+        parent_x=100,
+        parent_y=100,
+        parent_width=1000,
+        parent_height=600,
+        window_width=400,
+        window_height=200,
+        screen_width=1920,
+        screen_height=1080,
+    ) == (400, 300)
+    assert centered_window_position(
+        parent_x=1700,
+        parent_y=900,
+        parent_width=500,
+        parent_height=300,
+        window_width=400,
+        window_height=250,
+        screen_width=1920,
+        screen_height=1080,
+    ) == (1520, 830)
 
 
 def test_crop_row_to_select_keeps_previous_visible_crop() -> None:

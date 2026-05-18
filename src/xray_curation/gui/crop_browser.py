@@ -9,7 +9,7 @@ from PIL import Image, ImageTk
 from xray_curation.domain.labels import APPROVED_PIDRAY_LABELS
 from xray_curation.gui.annotation_editor import AnnotationEditorPanel
 from xray_curation.gui.label_widgets import (
-    attach_label_autocomplete,
+    LabelAutocompleteEntry,
     selected_approved_label,
 )
 from xray_curation.gui.operation_panels import (
@@ -245,6 +245,42 @@ def browser_page_for_item_index(
     return item_index // max(1, page_size)
 
 
+def browser_page_after_items_update(
+    current_page_index: int,
+    total_items: int,
+    reset_page: bool,
+    active_item_index: int | None = None,
+    focus_active_item: bool = True,
+    page_size: int = THUMBNAIL_PAGE_SIZE,
+) -> int:
+    if reset_page:
+        return 0
+    if focus_active_item:
+        active_page = browser_page_for_item_index(active_item_index, total_items, page_size)
+        if active_page is not None:
+            return active_page
+    return clamp_browser_page(current_page_index, total_items, page_size)
+
+
+def centered_window_position(
+    parent_x: int,
+    parent_y: int,
+    parent_width: int,
+    parent_height: int,
+    window_width: int,
+    window_height: int,
+    screen_width: int,
+    screen_height: int,
+) -> tuple[int, int]:
+    width = max(1, window_width)
+    height = max(1, window_height)
+    x = parent_x + max(0, parent_width - width) // 2
+    y = parent_y + max(0, parent_height - height) // 2
+    max_x = max(0, screen_width - width)
+    max_y = max(0, screen_height - height)
+    return max(0, min(x, max_x)), max(0, min(y, max_y))
+
+
 class CropBrowser(ttk.Frame):
     def __init__(self, master, state: CurationState) -> None:
         super().__init__(master, padding=(0, 8, 0, 0))
@@ -349,7 +385,7 @@ class CropBrowser(ttk.Frame):
         self.browser_tab = ttk.Frame(self.workspace_tabs, padding=(0, 6, 6, 0))
         self.viewer_tab = ttk.Frame(self.workspace_tabs, padding=(0, 6, 6, 0))
         self.browser_tab.columnconfigure(0, weight=1)
-        self.browser_tab.rowconfigure(2, weight=1)
+        self.browser_tab.rowconfigure(1, weight=1)
         self.viewer_tab.columnconfigure(0, weight=1)
         self.viewer_tab.rowconfigure(0, weight=1)
 
@@ -394,29 +430,8 @@ class CropBrowser(ttk.Frame):
             padx=(8, 0),
         )
 
-        pagebar = ttk.Frame(parent)
-        pagebar.grid(row=1, column=0, sticky="ew", pady=(0, 6))
-        pagebar.columnconfigure(2, weight=1)
-        self.previous_page_button = ttk.Button(
-            pagebar,
-            text="Previous Page",
-            command=self._select_previous_browser_page,
-        )
-        self.previous_page_button.grid(row=0, column=0, sticky="w")
-        self.next_page_button = ttk.Button(
-            pagebar,
-            text="Next Page",
-            command=self._select_next_browser_page,
-        )
-        self.next_page_button.grid(row=0, column=1, sticky="w", padx=(4, 0))
-        ttk.Label(pagebar, textvariable=self.browser_page_var).grid(
-            row=0,
-            column=2,
-            sticky="e",
-        )
-
         grid_frame = ttk.Frame(parent)
-        grid_frame.grid(row=2, column=0, sticky="nsew")
+        grid_frame.grid(row=1, column=0, sticky="nsew")
         grid_frame.columnconfigure(0, weight=1)
         grid_frame.rowconfigure(0, weight=1)
 
@@ -430,6 +445,40 @@ class CropBrowser(ttk.Frame):
         thumb_scroll = ttk.Scrollbar(grid_frame, orient=tk.VERTICAL, command=self.thumbnail_canvas.yview)
         thumb_scroll.grid(row=0, column=1, sticky="ns")
         self.thumbnail_canvas.configure(yscrollcommand=thumb_scroll.set)
+
+        pagebar = ttk.Frame(parent)
+        pagebar.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        pagebar.columnconfigure(2, weight=1)
+        self.first_page_button = ttk.Button(
+            pagebar,
+            text="First",
+            command=self._select_first_browser_page,
+        )
+        self.first_page_button.grid(row=0, column=0, sticky="w")
+        self.previous_page_button = ttk.Button(
+            pagebar,
+            text="Previous",
+            command=self._select_previous_browser_page,
+        )
+        self.previous_page_button.grid(row=0, column=1, sticky="w", padx=(4, 0))
+        ttk.Label(pagebar, textvariable=self.browser_page_var).grid(
+            row=0,
+            column=2,
+            sticky="e",
+            padx=(8, 8),
+        )
+        self.next_page_button = ttk.Button(
+            pagebar,
+            text="Next",
+            command=self._select_next_browser_page,
+        )
+        self.next_page_button.grid(row=0, column=3, sticky="e")
+        self.last_page_button = ttk.Button(
+            pagebar,
+            text="Last",
+            command=self._select_last_browser_page,
+        )
+        self.last_page_button.grid(row=0, column=4, sticky="e", padx=(4, 0))
 
     def _build_viewer_tab(self, parent: ttk.Frame) -> None:
         previews = ttk.Panedwindow(parent, orient=tk.HORIZONTAL)
@@ -705,7 +754,12 @@ class CropBrowser(ttk.Frame):
             anchor=tk.CENTER,
         )
 
-    def _set_crop_thumbnails(self, crops: list[dict], reset_page: bool = True) -> None:
+    def _set_crop_thumbnails(
+        self,
+        crops: list[dict],
+        reset_page: bool = True,
+        focus_active_item: bool = True,
+    ) -> None:
         seen_ids: dict[str, int] = {}
         items = []
         for crop in crops:
@@ -727,6 +781,7 @@ class CropBrowser(ttk.Frame):
             reset_page=reset_page,
             active_kind="crop",
             active_id=self.state.selected_crop_id,
+            focus_active_item=focus_active_item,
         )
 
     def _set_source_thumbnails(
@@ -734,6 +789,7 @@ class CropBrowser(ttk.Frame):
         dataset_root: Path,
         partition_id: str,
         reset_page: bool = True,
+        focus_active_item: bool = True,
     ) -> None:
         try:
             records = list(list_partition_source_images(dataset_root, partition_id))
@@ -756,6 +812,7 @@ class CropBrowser(ttk.Frame):
             reset_page=reset_page,
             active_kind="source",
             active_id=self.state.active_source_image_id,
+            focus_active_item=focus_active_item,
         )
 
     def _set_browser_items(
@@ -764,26 +821,24 @@ class CropBrowser(ttk.Frame):
         reset_page: bool = True,
         active_kind: str | None = None,
         active_id: str | None = None,
+        focus_active_item: bool = True,
     ) -> None:
         self._browser_all_items = items
         valid_ids = {str(item.get("item_id", "")) for item in items}
         self._browser_selected_item_ids.intersection_update(valid_ids)
-        if reset_page:
-            self._browser_page_index = 0
-        elif active_kind is not None and active_id:
-            active_page = self._browser_page_for_item(active_kind, active_id)
-            if active_page is not None:
-                self._browser_page_index = active_page
-            else:
-                self._browser_page_index = clamp_browser_page(
-                    self._browser_page_index,
-                    len(self._browser_all_items),
-                )
-        else:
-            self._browser_page_index = clamp_browser_page(
-                self._browser_page_index,
-                len(self._browser_all_items),
-            )
+        active_item_index = None
+        if active_kind is not None and active_id:
+            for index, item in enumerate(self._browser_all_items):
+                if item.get("kind") == active_kind and str(item.get("id", "")) == active_id:
+                    active_item_index = index
+                    break
+        self._browser_page_index = browser_page_after_items_update(
+            self._browser_page_index,
+            len(self._browser_all_items),
+            reset_page,
+            active_item_index=active_item_index,
+            focus_active_item=focus_active_item,
+        )
         self._apply_browser_page()
 
     def _browser_page_for_item(self, kind: str, record_id: str) -> int | None:
@@ -834,11 +889,27 @@ class CropBrowser(ttk.Frame):
                 self.previous_page_button.state(["disabled"])
             else:
                 self.previous_page_button.state(["!disabled"])
+        if hasattr(self, "first_page_button"):
+            if self._browser_page_index <= 0 or page_count <= 1:
+                self.first_page_button.state(["disabled"])
+            else:
+                self.first_page_button.state(["!disabled"])
         if hasattr(self, "next_page_button"):
             if page_count <= 1 or self._browser_page_index >= page_count - 1:
                 self.next_page_button.state(["disabled"])
             else:
                 self.next_page_button.state(["!disabled"])
+        if hasattr(self, "last_page_button"):
+            if page_count <= 1 or self._browser_page_index >= page_count - 1:
+                self.last_page_button.state(["disabled"])
+            else:
+                self.last_page_button.state(["!disabled"])
+
+    def _select_first_browser_page(self) -> None:
+        if self._browser_page_index <= 0:
+            return
+        self._browser_page_index = 0
+        self._apply_browser_page()
 
     def _select_previous_browser_page(self) -> None:
         if self._browser_page_index <= 0:
@@ -850,6 +921,13 @@ class CropBrowser(ttk.Frame):
         if self._browser_page_index >= browser_page_count(len(self._browser_all_items)) - 1:
             return
         self._browser_page_index += 1
+        self._apply_browser_page()
+
+    def _select_last_browser_page(self) -> None:
+        page_count = browser_page_count(len(self._browser_all_items))
+        if page_count <= 0 or self._browser_page_index >= page_count - 1:
+            return
+        self._browser_page_index = page_count - 1
         self._apply_browser_page()
 
     def _render_thumbnail_grid(self) -> None:
@@ -1144,7 +1222,12 @@ class CropBrowser(ttk.Frame):
         self.status_var_message.set(f"Loaded crops for {partition_id}.")
         self.refresh()
 
-    def refresh(self, select_first: bool = True, reset_browser_page: bool = True) -> None:
+    def refresh(
+        self,
+        select_first: bool = True,
+        reset_browser_page: bool = True,
+        focus_active_browser_item: bool = True,
+    ) -> None:
         previous_selection = self.state.selected_crop_id
         self.tree.delete(*self.tree.get_children())
         self._tree_crop_ids = {}
@@ -1194,7 +1277,11 @@ class CropBrowser(ttk.Frame):
                     crop.get("status", "active"),
                 ),
             )
-        self._set_crop_thumbnails(navigation_crops, reset_page=reset_browser_page)
+        self._set_crop_thumbnails(
+            navigation_crops,
+            reset_page=reset_browser_page,
+            focus_active_item=focus_active_browser_item,
+        )
         if self.state.active_source_image_id:
             self.status_var_message.set(
                 f"Showing {len(crops)} item(s) in image {self.state.active_source_image_id}; "
@@ -1304,6 +1391,25 @@ class CropBrowser(ttk.Frame):
     def _sync_pending_panel(self) -> None:
         self.pending_panel.set_changes(self.state.pending_changes)
 
+    def _center_dialog(self, dialog: tk.Toplevel) -> None:
+        parent = self.winfo_toplevel()
+        dialog.update_idletasks()
+        parent_width = max(1, parent.winfo_width())
+        parent_height = max(1, parent.winfo_height())
+        window_width = max(dialog.winfo_reqwidth(), dialog.winfo_width(), 360)
+        window_height = max(dialog.winfo_reqheight(), dialog.winfo_height(), 120)
+        x, y = centered_window_position(
+            parent.winfo_rootx(),
+            parent.winfo_rooty(),
+            parent_width,
+            parent_height,
+            window_width,
+            window_height,
+            dialog.winfo_screenwidth(),
+            dialog.winfo_screenheight(),
+        )
+        dialog.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
     def _ask_label(self, title: str, initial_label: str | None = None) -> str | None:
         selected: dict[str, str | None] = {"value": None}
         dialog = tk.Toplevel(self)
@@ -1321,15 +1427,13 @@ class CropBrowser(ttk.Frame):
             padx=12,
             pady=(12, 4),
         )
-        combo = ttk.Combobox(
+        label_entry = LabelAutocompleteEntry(
             dialog,
-            textvariable=label_var,
-            values=APPROVED_PIDRAY_LABELS,
-            state="normal",
-            width=32,
+            variable=label_var,
+            labels=APPROVED_PIDRAY_LABELS,
+            width=34,
         )
-        combo.grid(row=1, column=0, sticky="ew", padx=12)
-        attach_label_autocomplete(combo, label_var)
+        label_entry.grid(row=1, column=0, sticky="ew", padx=12)
 
         buttons = ttk.Frame(dialog)
         buttons.grid(row=2, column=0, sticky="e", padx=12, pady=12)
@@ -1342,15 +1446,22 @@ class CropBrowser(ttk.Frame):
                     "Type part of a label, then choose one approved PIDRay label from the dropdown.",
                     parent=dialog,
                 )
-                combo.focus_set()
+                label_entry.focus_entry()
                 return
             selected["value"] = label
+            label_entry.hide_popup()
             dialog.destroy()
 
-        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=0)
+        def cancel() -> None:
+            label_entry.hide_popup()
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Cancel", command=cancel).grid(row=0, column=0)
         ttk.Button(buttons, text="OK", command=choose).grid(row=0, column=1, padx=(4, 0))
         dialog.bind("<Return>", lambda _event: choose())
-        combo.focus_set()
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        self._center_dialog(dialog)
+        label_entry.focus_entry()
         self.wait_window(dialog)
         return selected["value"]
 
@@ -1459,7 +1570,11 @@ class CropBrowser(ttk.Frame):
                 f"Saved {summary['changes_applied']} change(s); refreshed {summary['refreshed_count']} image(s)."
             )
             self.annotation_editor.reload_active_image(selected_bbox_id=selected_bbox_id)
-            self.refresh(select_first=False, reset_browser_page=False)
+            self.refresh(
+                select_first=False,
+                reset_browser_page=False,
+                focus_active_browser_item=False,
+            )
 
         def on_error(exc):
             self.state.worker_status = "error"
