@@ -62,6 +62,12 @@ THUMBNAIL_CARD_HEIGHT = 112
 THUMBNAIL_GRID_PADDING = 10
 MIN_BROWSER_ZOOM = 70
 MAX_BROWSER_ZOOM = 180
+SAVE_PENDING_OVERLAY_ALPHA = 0.42
+SAVE_PENDING_OVERLAY_MIN_WIDTH = 460
+SAVE_PENDING_OVERLAY_LOADING_MIN_HEIGHT = 170
+SAVE_PENDING_OVERLAY_RESULT_MIN_HEIGHT = 220
+RIGHT_PANEL_RATIO = 0.2
+RIGHT_PANEL_MIN_WIDTH = 220
 GUI_HOW_TO_TEXT = """Typical workflow
 
 1. Choose a dataset root and select one partition.
@@ -71,7 +77,7 @@ GUI_HOW_TO_TEXT = """Typical workflow
 5. Use Image Viewer to inspect the source image, select boxes, draw boxes, relabel, delete, move, or resize.
 6. In Image Viewer, Previous Crop and Next Crop move through the current filtered crop list.
 7. Review the Pending tab.
-8. Click Save Pending only when the pending list looks correct.
+8. Click Save Pending or press Ctrl+S only when the pending list looks correct.
 
 Right panel list
 
@@ -180,16 +186,16 @@ def browser_grid_column_count(
     card_width: int = THUMBNAIL_CARD_WIDTH,
     padding: int = THUMBNAIL_GRID_PADDING,
 ) -> int:
-    return max(1, max(canvas_width, card_width + padding) // (card_width + padding))
+    return max(1, max(0, canvas_width - padding) // (card_width + padding))
 
 
 def browser_grid_position(
     index: int,
     columns: int,
-    card_width: int = THUMBNAIL_CARD_WIDTH,
-    card_height: int = THUMBNAIL_CARD_HEIGHT,
+    card_width: float = THUMBNAIL_CARD_WIDTH,
+    card_height: float = THUMBNAIL_CARD_HEIGHT,
     padding: int = THUMBNAIL_GRID_PADDING,
-) -> tuple[int, int]:
+) -> tuple[float, float]:
     column = index % max(columns, 1)
     row = index // max(columns, 1)
     return padding + column * (card_width + padding), padding + row * (card_height + padding)
@@ -203,6 +209,25 @@ def browser_card_size(
     zoom = min(MAX_BROWSER_ZOOM, max(MIN_BROWSER_ZOOM, int(zoom_percent)))
     scale = zoom / 100
     return max(88, round(base_width * scale)), max(82, round(base_height * scale))
+
+
+def quantized_browser_grid_layout(
+    canvas_width: int,
+    zoom_percent: int,
+    padding: int = THUMBNAIL_GRID_PADDING,
+    base_width: int = THUMBNAIL_CARD_WIDTH,
+    base_height: int = THUMBNAIL_CARD_HEIGHT,
+) -> tuple[int, float, float]:
+    target_card_width, _ = browser_card_size(
+        zoom_percent,
+        base_width=base_width,
+        base_height=base_height,
+    )
+    columns = browser_grid_column_count(canvas_width, card_width=target_card_width, padding=padding)
+    available_width = max(1, canvas_width - padding * (columns + 1))
+    card_width = available_width / columns
+    card_height = max(70.0, card_width * (base_height / base_width))
+    return columns, card_width, card_height
 
 
 def browser_page_count(total_items: int, page_size: int = THUMBNAIL_PAGE_SIZE) -> int:
@@ -281,6 +306,177 @@ def centered_window_position(
     return max(0, min(x, max_x)), max(0, min(y, max_y))
 
 
+def save_pending_success_message(summary: dict) -> str:
+    return (
+        f"Saved {summary.get('changes_applied', 0)} change(s); "
+        f"refreshed {summary.get('refreshed_count', 0)} image(s)."
+    )
+
+
+def save_pending_issue_message(errors: list[str] | tuple[str, ...], fallback: str) -> str:
+    clean_errors = [str(error).strip() for error in errors if str(error).strip()]
+    return "\n".join(clean_errors) if clean_errors else fallback
+
+
+def right_panel_width(
+    total_width: int,
+    ratio: float = RIGHT_PANEL_RATIO,
+    min_width: int = RIGHT_PANEL_MIN_WIDTH,
+) -> int:
+    if total_width <= 0:
+        return min_width
+    return max(min_width, round(total_width * ratio))
+
+
+class SavePendingOverlay:
+    def __init__(self, parent: tk.Widget, initial_status: str) -> None:
+        self.parent = parent
+        self.root = parent.winfo_toplevel()
+        self._animation_id: str | None = None
+        self._animation_step = 0
+        self._base_title = "Saving pending changes"
+
+        self.backdrop = tk.Toplevel(parent)
+        self.backdrop.withdraw()
+        self.backdrop.overrideredirect(True)
+        self.backdrop.configure(background="#050505")
+        self.backdrop.transient(self.root)
+        self.backdrop.protocol("WM_DELETE_WINDOW", lambda: None)
+        try:
+            self.backdrop.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        try:
+            self.backdrop.attributes("-alpha", SAVE_PENDING_OVERLAY_ALPHA)
+        except tk.TclError:
+            pass
+
+        self.window = tk.Toplevel(parent)
+        self.window.withdraw()
+        self.window.overrideredirect(True)
+        self.window.configure(background="#151515")
+        self.window.transient(self.root)
+        self.window.protocol("WM_DELETE_WINDOW", lambda: None)
+        try:
+            self.window.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        self.window.columnconfigure(0, weight=1)
+        self.window.rowconfigure(0, weight=1)
+
+        panel = tk.Frame(
+            self.window,
+            background="#151515",
+            highlightbackground="#d1d5db",
+            highlightthickness=2,
+            padx=28,
+            pady=24,
+        )
+        panel.grid(row=0, column=0, sticky="nsew")
+
+        self.title_label = tk.Label(
+            panel,
+            text=self._base_title,
+            background="#151515",
+            foreground="#ffffff",
+            font=("Segoe UI", 15, "bold"),
+        )
+        self.title_label.grid(row=0, column=0, sticky="ew")
+
+        self.status_label = tk.Label(
+            panel,
+            text=initial_status,
+            background="#151515",
+            foreground="#d8d8d8",
+            font=("Segoe UI", 10),
+            justify=tk.CENTER,
+            wraplength=520,
+        )
+        self.status_label.grid(row=1, column=0, sticky="ew", pady=(10, 16))
+
+        self.progress = ttk.Progressbar(panel, mode="indeterminate", length=360)
+        self.progress.grid(row=2, column=0, sticky="ew")
+
+        self.close_button = ttk.Button(panel, text="OK", command=self.close)
+        panel.columnconfigure(0, weight=1)
+
+        self._place_over_root()
+        self.backdrop.deiconify()
+        self.window.deiconify()
+        self.backdrop.lift(self.root)
+        self.window.lift(self.backdrop)
+        self.progress.start(12)
+        self._animate()
+
+    def _place_over_root(
+        self,
+        min_width: int = SAVE_PENDING_OVERLAY_MIN_WIDTH,
+        min_height: int = SAVE_PENDING_OVERLAY_LOADING_MIN_HEIGHT,
+    ) -> None:
+        self.root.update_idletasks()
+        width = max(1, self.root.winfo_width())
+        height = max(1, self.root.winfo_height())
+        root_x = self.root.winfo_rootx()
+        root_y = self.root.winfo_rooty()
+        self.backdrop.geometry(f"{width}x{height}+{root_x}+{root_y}")
+        self.window.update_idletasks()
+        window_width = max(self.window.winfo_reqwidth(), self.window.winfo_width(), min_width)
+        window_height = max(self.window.winfo_reqheight(), self.window.winfo_height(), min_height)
+        x, y = centered_window_position(
+            root_x,
+            root_y,
+            width,
+            height,
+            window_width,
+            window_height,
+            self.window.winfo_screenwidth(),
+            self.window.winfo_screenheight(),
+        )
+        self.window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+    def _animate(self) -> None:
+        if not self.window.winfo_exists():
+            return
+        dots = "." * ((self._animation_step % 3) + 1)
+        self.title_label.configure(text=f"{self._base_title}{dots}")
+        self._animation_step += 1
+        self._animation_id = self.window.after(350, self._animate)
+
+    def show_result(self, title: str, message: str, kind: str = "success") -> None:
+        if not self.window.winfo_exists():
+            return
+        if self._animation_id is not None:
+            try:
+                self.window.after_cancel(self._animation_id)
+            except tk.TclError:
+                pass
+            self._animation_id = None
+        self.progress.stop()
+        self.progress.grid_remove()
+        title_color = "#a7f3d0" if kind == "success" else "#fecaca"
+        self.title_label.configure(text=title, foreground=title_color)
+        self.status_label.configure(text=message)
+        self.close_button.grid(row=3, column=0, pady=(20, 10))
+        self._place_over_root(min_height=SAVE_PENDING_OVERLAY_RESULT_MIN_HEIGHT)
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.backdrop.lift(self.root)
+        self.window.lift(self.backdrop)
+
+    def close(self) -> None:
+        if self._animation_id is not None:
+            try:
+                self.window.after_cancel(self._animation_id)
+            except tk.TclError:
+                pass
+            self._animation_id = None
+        for window in (self.window, self.backdrop):
+            try:
+                if window.winfo_exists():
+                    window.destroy()
+            except tk.TclError:
+                pass
+
+
 class CropBrowser(ttk.Frame):
     def __init__(self, master, state: CurationState) -> None:
         super().__init__(master, padding=(0, 8, 0, 0))
@@ -301,24 +497,31 @@ class CropBrowser(ttk.Frame):
         self._browser_all_items: list[dict] = []
         self._thumbnail_items: list[dict] = []
         self._thumbnail_photos: list[ImageTk.PhotoImage] = []
-        self._thumbnail_hitboxes: list[tuple[int, int, int, int, dict]] = []
+        self._thumbnail_hitboxes: list[tuple[float, float, float, float, dict]] = []
         self._browser_selected_item_ids: set[str] = set()
         self._browser_page_index = 0
         self._tree_crop_ids: dict[str, str] = {}
         self._navigation_anchor_crop_id: str | None = None
+        self._save_overlay: SavePendingOverlay | None = None
         self._build()
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
-        panes = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
-        panes.grid(row=0, column=0, sticky="nsew")
+        split = ttk.Frame(self)
+        split.grid(row=0, column=0, sticky="nsew")
+        split.columnconfigure(0, weight=1)
+        split.columnconfigure(1, weight=0)
+        split.rowconfigure(0, weight=1)
 
-        left = ttk.Frame(panes, padding=(0, 0, 8, 0))
-        right = ttk.Frame(panes, padding=(8, 0, 0, 0))
-        panes.add(left, weight=5)
-        panes.add(right, weight=2)
+        left = ttk.Frame(split, padding=(0, 0, 8, 0))
+        right = ttk.Frame(split, padding=(8, 0, 0, 0), width=RIGHT_PANEL_MIN_WIDTH)
+        left.grid(row=0, column=0, sticky="nsew")
+        right.grid(row=0, column=1, sticky="ns")
+        right.grid_propagate(False)
+        self._right_panel = right
+        split.bind("<Configure>", self._on_main_split_configure, add="+")
 
         left.columnconfigure(0, weight=1)
         left.rowconfigure(0, weight=1)
@@ -378,6 +581,11 @@ class CropBrowser(ttk.Frame):
         self.tabs.add(pending_tab, text="Pending")
         self.tabs.add(help_tab, text="How To")
 
+    def _on_main_split_configure(self, event) -> None:
+        width = right_panel_width(event.width)
+        if abs(self._right_panel.winfo_width() - width) > 1:
+            self._right_panel.configure(width=width)
+
     def _build_preview_area(self, parent: ttk.Frame) -> None:
         self.workspace_tabs = ttk.Notebook(parent)
         self.workspace_tabs.grid(row=0, column=0, sticky="nsew")
@@ -417,7 +625,7 @@ class CropBrowser(ttk.Frame):
             command=self._on_browser_zoom_changed,
             length=150,
         ).grid(row=0, column=6, sticky="e")
-        ttk.Label(toolbar, textvariable=self.browser_zoom_text_var, width=5).grid(
+        ttk.Label(toolbar, textvariable=self.browser_zoom_text_var, width=12).grid(
             row=0,
             column=7,
             padx=(4, 8),
@@ -942,10 +1150,13 @@ class CropBrowser(ttk.Frame):
             canvas.configure(scrollregion=(0, 0, max(canvas.winfo_width(), 320), max(canvas.winfo_height(), 240)))
             return
 
-        card_w, card_h = browser_card_size(self.browser_zoom_var.get())
-        columns = browser_grid_column_count(canvas.winfo_width(), card_width=card_w)
-        image_w = card_w - 16
-        image_h = card_h - 38
+        columns, card_w, card_h = quantized_browser_grid_layout(
+            max(1, canvas.winfo_width()),
+            self.browser_zoom_var.get(),
+        )
+        self.browser_zoom_text_var.set(f"{self.browser_zoom_var.get()}% | {columns}/row")
+        image_w = max(1, round(card_w - 16))
+        image_h = max(1, round(card_h - 38))
         for index, item in enumerate(self._thumbnail_items):
             x, y = browser_grid_position(index, columns, card_width=card_w, card_height=card_h)
             item_id = str(item.get("item_id", ""))
@@ -972,23 +1183,23 @@ class CropBrowser(ttk.Frame):
                     photo = ImageTk.PhotoImage(fitted)
                     self._thumbnail_photos.append(photo)
                     canvas.create_image(
-                        x + card_w // 2,
-                        y + 8 + image_h // 2,
+                        x + card_w / 2,
+                        y + 8 + image_h / 2,
                         image=photo,
                         anchor=tk.CENTER,
                     )
                 except Exception:
                     canvas.create_text(
-                        x + card_w // 2,
-                        y + 8 + image_h // 2,
+                        x + card_w / 2,
+                        y + 8 + image_h / 2,
                         text="Preview\nfailed",
                         fill="#f0f0f0",
                         anchor=tk.CENTER,
                     )
             else:
                 canvas.create_text(
-                    x + card_w // 2,
-                    y + 8 + image_h // 2,
+                    x + card_w / 2,
+                    y + 8 + image_h / 2,
                     text="Missing\nimage",
                     fill="#f0f0f0",
                     anchor=tk.CENTER,
@@ -1515,13 +1726,39 @@ class CropBrowser(ttk.Frame):
         self.pending_panel.set_changes(self.state.pending_changes)
         self.status_var_message.set("Cancelled pending changes for selected crop.")
 
+    def save_pending(self) -> None:
+        self._save_pending()
+
+    def _start_save_overlay(self, status: str) -> SavePendingOverlay:
+        if self._save_overlay is not None:
+            try:
+                if self._save_overlay.window.winfo_exists():
+                    self._save_overlay.close()
+            except tk.TclError:
+                pass
+        self._save_overlay = SavePendingOverlay(self, status)
+        return self._save_overlay
+
+    def _show_save_issue_overlay(self, title: str, errors: list[str] | tuple[str, ...], fallback: str) -> None:
+        overlay = self._start_save_overlay("Checking pending changes...")
+        overlay.show_result(title, save_pending_issue_message(errors, fallback), kind="error")
+
     def _save_pending(self) -> None:
+        if self.state.worker_status == "saving_pending":
+            if self._save_overlay is not None and self._save_overlay.window.winfo_exists():
+                self._save_overlay.window.lift(self.winfo_toplevel())
+            self.status_var_message.set("Save Pending is already running.")
+            return
         if not self.state.pending_changes:
             self.status_var_message.set("No pending changes to save.")
             return
         conflicts = validate_pending_change_conflicts(self.state.pending_changes)
         if not conflicts.success:
-            messagebox.showerror("Conflicting pending edits", "\n".join(conflicts.errors))
+            self._show_save_issue_overlay(
+                "Cannot Save Pending Changes",
+                conflicts.errors,
+                "Resolve conflicting pending edits before saving.",
+            )
             self.status_var_message.set("Resolve conflicting pending edits before saving.")
             return
         changes = list(self.state.pending_changes)
@@ -1531,6 +1768,9 @@ class CropBrowser(ttk.Frame):
         self.state.worker_status = "saving_pending"
         self.state.worker_progress = 0
         self.status_var_message.set("Saving pending changes...")
+        overlay = self._start_save_overlay(
+            f"Applying {len(changes)} pending change(s). Writing annotation JSON atomically, then refreshing affected crops."
+        )
 
         def work():
             commit_result = commit_shared_pending_changes(changes)
@@ -1548,12 +1788,28 @@ class CropBrowser(ttk.Frame):
             commit_result, refresh_result = payload
             if not commit_result.success:
                 self.state.worker_status = "error"
-                messagebox.showerror("Save failed", "\n".join(commit_result.errors))
+                self.state.worker_progress = 100
+                overlay.show_result(
+                    "Save Pending Failed",
+                    save_pending_issue_message(
+                        commit_result.errors,
+                        "Annotation JSON was not saved. Pending changes were kept.",
+                    ),
+                    kind="error",
+                )
                 self.status_var_message.set("Save failed; pending changes were kept.")
                 return
             if refresh_result is not None and not refresh_result.success:
                 self.state.worker_status = "error"
-                messagebox.showerror("Refresh failed", "\n".join(refresh_result.errors))
+                self.state.worker_progress = 100
+                overlay.show_result(
+                    "Crop Refresh Failed",
+                    save_pending_issue_message(
+                        refresh_result.errors,
+                        "Annotation save completed, but affected crop refresh failed. Pending changes were kept.",
+                    ),
+                    kind="error",
+                )
                 self.status_var_message.set("Refresh failed; pending changes were kept.")
                 return
             if dataset_root and partition_id and crop_manifest_path(dataset_root, partition_id).exists():
@@ -1566,19 +1822,28 @@ class CropBrowser(ttk.Frame):
             self.state.worker_status = "idle"
             self.state.worker_progress = 100
             summary = summarize_commit_and_refresh(commit_result, refresh_result)
-            self.status_var_message.set(
-                f"Saved {summary['changes_applied']} change(s); refreshed {summary['refreshed_count']} image(s)."
-            )
+            summary_text = save_pending_success_message(summary)
+            self.status_var_message.set(summary_text)
             self.annotation_editor.reload_active_image(selected_bbox_id=selected_bbox_id)
             self.refresh(
                 select_first=False,
                 reset_browser_page=False,
                 focus_active_browser_item=False,
             )
+            overlay.show_result(
+                "Save Pending Complete",
+                f"{summary_text}\nPending queue cleared and the active image was reloaded.",
+                kind="success",
+            )
 
         def on_error(exc):
             self.state.worker_status = "error"
-            messagebox.showerror("Save failed", str(exc))
+            self.state.worker_progress = 100
+            overlay.show_result(
+                "Save Pending Failed",
+                f"{exc}\nPending changes were kept so you can retry or inspect them.",
+                kind="error",
+            )
             self.status_var_message.set("Save failed; pending changes were kept.")
 
         run_operation(self, "save_pending", work, on_success, on_error)

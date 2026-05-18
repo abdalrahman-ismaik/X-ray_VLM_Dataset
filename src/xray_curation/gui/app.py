@@ -16,6 +16,7 @@ from xray_curation.services.crop_generator import (
     generate_crops_for_partition,
     refresh_changed_crops_for_partition,
 )
+from xray_curation.services.crop_manifest import crop_manifest_path
 from xray_curation.services.dataset_index import (
     build_dataset_manifest,
     dataset_manifest_path,
@@ -40,6 +41,32 @@ def partition_size_from_manifest(manifest: dict, fallback: int = DEFAULT_PARTITI
     except (TypeError, ValueError):
         return fallback
     return size if size > 0 else fallback
+
+
+def partition_id_from_dropdown_value(value: str) -> str | None:
+    return value.split(" ", 1)[0] if value else None
+
+
+def startup_partition_index(
+    partition_values: list[str],
+    current_partition_id: str | None,
+    generated_partition_ids: set[str],
+) -> int:
+    if not partition_values:
+        return 0
+    if current_partition_id:
+        for index, value in enumerate(partition_values):
+            if partition_id_from_dropdown_value(value) == current_partition_id:
+                return index
+    for index, value in enumerate(partition_values):
+        partition_id = partition_id_from_dropdown_value(value)
+        if partition_id in generated_partition_ids:
+            return index
+    return 0
+
+
+def should_handle_save_shortcut(modal_dialog_active: bool) -> bool:
+    return not modal_dialog_active
 
 
 class CurationApp(ttk.Frame):
@@ -71,7 +98,18 @@ class CurationApp(ttk.Frame):
         self._build_topbar()
         self.crop_browser = CropBrowser(self, self.state)
         self.crop_browser.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        self.master.bind_all("<Control-s>", self._save_pending_shortcut, add="+")
+        self.master.bind_all("<Control-S>", self._save_pending_shortcut, add="+")
         self._build_statusbar()
+
+    def _has_modal_dialog_active(self) -> bool:
+        grabbed = self.master.grab_current()
+        return grabbed is not None and grabbed.winfo_toplevel() is not self.master
+
+    def _save_pending_shortcut(self, _event=None) -> str:
+        if should_handle_save_shortcut(self._has_modal_dialog_active()):
+            self.crop_browser.save_pending()
+        return "break"
 
     def _build_topbar(self) -> None:
         self.setup_container = ttk.Frame(self)
@@ -216,6 +254,7 @@ class CurationApp(ttk.Frame):
         self.status_var.set(message)
         self.progress_text_var.set("Ready")
         self.progress_var.set(0)
+        self._set_setup_collapsed(False)
         self._update_setup_summary()
 
     def _apply_dataset_manifest(self, manifest: dict, message: str) -> None:
@@ -229,18 +268,27 @@ class CurationApp(ttk.Frame):
             return
 
         current_partition_id = self._selected_partition_id()
-        selected_index = 0
-        if current_partition_id:
-            for index, value in enumerate(values):
-                if value.startswith(f"{current_partition_id} "):
-                    selected_index = index
-                    break
+        generated_partition_ids = {
+            str(partition.get("partition_id"))
+            for partition in self.partitions
+            if partition.get("partition_id")
+            and crop_manifest_path(Path(self.dataset_var.get()), str(partition.get("partition_id"))).exists()
+        }
+        selected_index = startup_partition_index(
+            values,
+            current_partition_id,
+            generated_partition_ids,
+        )
         self.partition_combo.current(selected_index)
         self.partition_var.set(values[selected_index])
         self._load_selected_partition()
         self.status_var.set(message)
         self.progress_text_var.set("Ready")
         self.progress_var.set(100)
+        selected_partition_id = self._selected_partition_id()
+        self._set_setup_collapsed(
+            bool(self.partitions and selected_partition_id in generated_partition_ids)
+        )
         self._update_setup_summary()
 
     def _try_load_existing_manifest(self) -> None:
@@ -337,10 +385,7 @@ class CurationApp(ttk.Frame):
         run_tk_worker(self.master, work, on_success, on_error)
 
     def _selected_partition_id(self) -> str | None:
-        value = self.partition_var.get()
-        if not value:
-            return None
-        return value.split(" ", 1)[0]
+        return partition_id_from_dropdown_value(self.partition_var.get())
 
     def _load_selected_partition(self) -> None:
         partition_id = self._selected_partition_id()

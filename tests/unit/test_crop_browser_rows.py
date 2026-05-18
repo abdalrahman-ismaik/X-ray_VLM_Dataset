@@ -6,12 +6,16 @@ from xray_curation.gui.crop_browser import (
     browser_page_for_item_index,
     browser_page_slice,
     browser_grid_position,
+    quantized_browser_grid_layout,
     centered_window_position,
     clamp_browser_page,
     crop_id_after_navigation,
     crop_row_to_select_after_refresh,
     crops_for_active_image,
     navigation_anchor_after_crop_selection,
+    right_panel_width,
+    save_pending_issue_message,
+    save_pending_success_message,
     unique_crop_row_id,
 )
 
@@ -45,6 +49,26 @@ def test_browser_card_size_zoom_changes_grid_density() -> None:
         600,
         card_width=small_width,
     )
+
+
+def test_quantized_browser_grid_layout_fills_browser_width() -> None:
+    columns, card_width, _ = quantized_browser_grid_layout(601, 100)
+
+    assert columns == 4
+    assert abs((columns * card_width) + ((columns + 1) * 10) - 601) < 0.001
+
+
+def test_quantized_browser_grid_layout_zoom_changes_column_count() -> None:
+    small_zoom_columns, _, _ = quantized_browser_grid_layout(900, 70)
+    large_zoom_columns, _, _ = quantized_browser_grid_layout(900, 180)
+
+    assert large_zoom_columns < small_zoom_columns
+
+
+def test_right_panel_width_uses_twenty_percent_with_minimum() -> None:
+    assert right_panel_width(1100) == 220
+    assert right_panel_width(1920) == 384
+    assert right_panel_width(800) == 220
 
 
 def test_browser_page_count_keeps_120_items_per_page() -> None:
@@ -125,6 +149,17 @@ def test_centered_window_position_keeps_dialog_inside_screen() -> None:
         screen_width=1920,
         screen_height=1080,
     ) == (1520, 830)
+
+
+def test_save_pending_status_messages_are_clear() -> None:
+    assert (
+        save_pending_success_message({"changes_applied": 3, "refreshed_count": 1})
+        == "Saved 3 change(s); refreshed 1 image(s)."
+    )
+    assert save_pending_issue_message([" first issue ", "", "second issue"], "fallback") == (
+        "first issue\nsecond issue"
+    )
+    assert save_pending_issue_message([], "fallback") == "fallback"
 
 
 def test_crop_row_to_select_keeps_previous_visible_crop() -> None:
