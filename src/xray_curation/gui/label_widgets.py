@@ -60,6 +60,16 @@ def should_post_label_dropdown(query: str, matches: tuple[str, ...]) -> bool:
     return bool(_fold_label(query) and matches)
 
 
+def label_dropdown_values(
+    query: str,
+    labels: tuple[str, ...] = APPROVED_PIDRAY_LABELS,
+    show_all: bool = False,
+) -> tuple[str, ...]:
+    if show_all or not _fold_label(query):
+        return labels
+    return matching_approved_labels(query, labels)
+
+
 def _restore_combobox_typing_focus(combo: ttk.Combobox, cursor_index: int | None = None) -> None:
     if not combo.winfo_exists():
         return
@@ -135,7 +145,15 @@ class LabelAutocompleteEntry(ttk.Frame):
         self.max_visible = max_visible
         self.entry = ttk.Entry(self, textvariable=self.variable, width=width)
         self.entry.grid(row=0, column=0, sticky="ew")
+        self.dropdown_button = ttk.Button(
+            self,
+            text="v",
+            width=2,
+            command=self.toggle_dropdown,
+        )
+        self.dropdown_button.grid(row=0, column=1, sticky="e", padx=(2, 0))
         self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=0)
 
         self._popup: tk.Toplevel | None = None
         self._listbox: tk.Listbox | None = None
@@ -146,9 +164,24 @@ class LabelAutocompleteEntry(ttk.Frame):
         self.entry.bind("<Escape>", self._hide_popup_event, add="+")
         self.entry.bind("<FocusOut>", self._hide_after_focus_change, add="+")
         self.entry.bind("<Destroy>", self._destroy_popup, add="+")
+        self.dropdown_button.bind("<FocusOut>", self._hide_after_focus_change, add="+")
 
-    def focus_entry(self) -> None:
-        self.entry.focus_set()
+    def focus_entry(self, select_text: bool = False) -> None:
+        try:
+            self.entry.configure(state="normal")
+        except tk.TclError:
+            pass
+        try:
+            self.entry.focus_force()
+        except tk.TclError:
+            self.entry.focus_set()
+        if select_text:
+            self.entry.selection_range(0, tk.END)
+        else:
+            try:
+                self.entry.selection_clear()
+            except tk.TclError:
+                pass
         self.entry.icursor(tk.END)
 
     def _on_key_release(self, event) -> None:
@@ -156,10 +189,21 @@ class LabelAutocompleteEntry(ttk.Frame):
             return
         self._refresh_popup()
 
-    def _refresh_popup(self) -> None:
+    def toggle_dropdown(self) -> None:
+        if self._popup is not None and self._popup.winfo_exists() and self._popup.state() != "withdrawn":
+            self.hide_popup()
+            self.focus_entry()
+            return
+        self._refresh_popup(force=True, focus_listbox=True)
+
+    def _refresh_popup(self, force: bool = False, focus_listbox: bool = False) -> None:
         query = self.variable.get()
-        matches = matching_approved_labels(query, self.labels)
-        if not should_post_label_dropdown(query, matches):
+        show_all = force and selected_approved_label(query, self.labels) is not None
+        matches = label_dropdown_values(query, self.labels, show_all=show_all)
+        if not force and not should_post_label_dropdown(query, matches):
+            self.hide_popup()
+            return
+        if not matches:
             self.hide_popup()
             return
 
@@ -174,7 +218,12 @@ class LabelAutocompleteEntry(ttk.Frame):
             self._listbox.insert(tk.END, label)
         self._position_popup()
         self._popup.deiconify()
-        self.focus_entry()
+        self._popup.lift()
+        if focus_listbox and self._listbox.size():
+            self._listbox.focus_set()
+            self._listbox.selection_clear(0, tk.END)
+            self._listbox.selection_set(0)
+            self._listbox.activate(0)
 
     def _ensure_popup(self) -> None:
         if self._popup is not None and self._popup.winfo_exists():
@@ -204,19 +253,14 @@ class LabelAutocompleteEntry(ttk.Frame):
             return
         self.update_idletasks()
         row_height = max(18, self._listbox.winfo_reqheight() // max(1, self._listbox.size()))
-        width = max(self.entry.winfo_width(), 220)
+        width = max(self.winfo_width(), self.entry.winfo_width(), 240)
         height = max(24, row_height * max(1, self._listbox.size()) + 4)
-        x = self.entry.winfo_rootx()
+        x = self.winfo_rootx()
         y = self.entry.winfo_rooty() + self.entry.winfo_height()
         self._popup.geometry(f"{width}x{height}+{x}+{y}")
 
     def _focus_listbox(self, _event=None) -> str:
-        self._refresh_popup()
-        if self._listbox is not None and self._listbox.size():
-            self._listbox.focus_set()
-            self._listbox.selection_clear(0, tk.END)
-            self._listbox.selection_set(0)
-            self._listbox.activate(0)
+        self._refresh_popup(force=True, focus_listbox=True)
         return "break"
 
     def _accept_current(self, _event=None) -> str | None:
@@ -248,8 +292,9 @@ class LabelAutocompleteEntry(ttk.Frame):
 
     def _choose_label(self, label: str) -> None:
         self.variable.set(label)
-        self.hide_popup()
-        self.focus_entry()
+        self._destroy_popup()
+        self.focus_entry(select_text=True)
+        self.after_idle(lambda: self.focus_entry(select_text=True))
 
     def _hide_popup_event(self, _event=None) -> str:
         self.hide_popup()
@@ -261,7 +306,7 @@ class LabelAutocompleteEntry(ttk.Frame):
 
     def _hide_if_focus_left_widget(self) -> None:
         focused = self.focus_get()
-        if focused in {self.entry, self._listbox}:
+        if focused in {self.entry, self.dropdown_button, self._listbox}:
             return
         self.hide_popup()
 

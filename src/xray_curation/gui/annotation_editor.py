@@ -250,7 +250,7 @@ class AnnotationEditorPanel(ttk.Frame):
         self.label_combo = LabelAutocompleteEntry(
             editor_tools,
             variable=self.draw_label_var,
-            width=22,
+            width=26,
         )
         self.label_combo.grid(row=0, column=2, padx=(4, 0), sticky="w")
         ttk.Button(editor_tools, text="Cancel Draw", command=self.cancel_draw_mode).grid(
@@ -459,6 +459,7 @@ class AnnotationEditorPanel(ttk.Frame):
             return
         self._update_status()
         self._update_details()
+        self._sync_label_field_from_selection()
         self.after_idle(self._render)
 
     def _reset_view_state(self) -> None:
@@ -511,6 +512,11 @@ class AnnotationEditorPanel(ttk.Frame):
                 )
             )
         )
+
+    def _sync_label_field_from_selection(self) -> None:
+        selected = self._selected_box()
+        if selected is not None:
+            self.draw_label_var.set(selected.label)
 
     def enter_draw_mode(self) -> None:
         if self._context is None:
@@ -804,6 +810,9 @@ class AnnotationEditorPanel(ttk.Frame):
                 boxes.append(box)
         self._context = replace(self._context, boxes=tuple(boxes)).with_selection(change.target_id)
         self.state.selected_bbox_id = change.target_id
+        selected = self._selected_box()
+        if selected is not None:
+            self.draw_label_var.set(label or selected.label)
         self.status_var.set(f"Staged {change.operation}. Use Save Pending to write JSON.")
         self._update_details()
         self._render()
@@ -968,6 +977,7 @@ class AnnotationEditorPanel(ttk.Frame):
         self._context = self._context.with_selection(bbox_id)
         self.state.selected_bbox_id = bbox_id
         self._update_details()
+        self._sync_label_field_from_selection()
         self._render()
         if self._on_bbox_selected is not None:
             self._on_bbox_selected(self._context, bbox_id)
