@@ -16,6 +16,7 @@ class CurationState:
     selected_image_id: str | None = None
     selected_bbox_id: str | None = None
     active_source_image_id: str | None = None
+    review_state: dict[str, Any] | None = None
     annotation_editor_mode: str = "browse"
     worker_status: str = "idle"
     worker_progress: float = 0

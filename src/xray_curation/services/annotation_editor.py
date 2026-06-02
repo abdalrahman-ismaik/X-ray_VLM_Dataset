@@ -161,13 +161,13 @@ def normalize_drawn_rectangle(
 
 def validate_new_box_label(label: str) -> str:
     if not is_approved_label(label):
-        raise ValueError(f"New boxes require an approved PIDRay label: {label}")
+        raise ValueError(f"New boxes require an approved formal label: {label}")
     return label
 
 
 def validate_existing_box_label(label: str) -> str:
     if not is_approved_label(label):
-        raise ValueError(f"Existing boxes require an approved PIDRay label: {label}")
+        raise ValueError(f"Existing boxes require an approved formal label: {label}")
     return label
 
 
@@ -409,6 +409,21 @@ def load_source_image_context(
     selected_bbox_id: str | None = None,
 ) -> SourceImageContext:
     record = _find_image_record(dataset_root, partition_id, image_id)
+    return load_source_image_context_from_record(
+        dataset_root,
+        partition_id,
+        record,
+        selected_bbox_id=selected_bbox_id,
+    )
+
+
+def load_source_image_context_from_record(
+    dataset_root: str | Path,
+    partition_id: str,
+    record: ImageRecord,
+    selected_bbox_id: str | None = None,
+) -> SourceImageContext:
+    image_id = record.image_id
     if not record.image_path.exists():
         raise FileNotFoundError(f"Source image not found: {record.image_path}")
     if not record.annotation_path.exists():

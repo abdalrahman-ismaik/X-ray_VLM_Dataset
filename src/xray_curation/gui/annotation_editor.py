@@ -8,7 +8,7 @@ from tkinter import ttk
 
 from PIL import Image, ImageTk
 
-from xray_curation.domain.labels import APPROVED_PIDRAY_LABELS
+from xray_curation.domain.labels import APPROVED_FORMAL_LABELS
 from xray_curation.domain.operations import PendingChange
 from xray_curation.gui.label_widgets import (
     LabelAutocompleteEntry,
@@ -23,6 +23,7 @@ from xray_curation.services.annotation_editor import (
     list_partition_source_images,
     load_source_context_for_crop,
     load_source_image_context,
+    load_source_image_context_from_record,
     move_rectangle,
     normalize_drawn_rectangle,
     resize_rectangle,
@@ -121,7 +122,7 @@ ANNOTATION_EDITOR_REQUIRED_GUIDANCE_TERMS: tuple[str, ...] = (
     "source context",
     "overlapping",
     "Draw Box",
-    "approved PIDRay label",
+    "approved formal label",
     "move",
     "resize",
     "Relabel Box",
@@ -136,7 +137,7 @@ ANNOTATION_EDITOR_GUIDANCE_STEPS: tuple[str, ...] = (
     "Index Dataset, choose the selected partition, then use Preview for source-image browsing before or after crops exist.",
     "Crop selection opens the source context and highlights the matching bounding box.",
     "Click a box to select it; repeated clicks on overlapping boxes cycle through them in annotation order.",
-    "Use Draw Box with an approved PIDRay label to stage a new rectangle.",
+    "Use Draw Box with an approved formal label to stage a new rectangle.",
     "Drag the selected box body to move it, or drag a corner handle to resize it.",
     "Use Relabel Box, Delete Box, or Cancel Box Edit for selected-box pending edits.",
     "Use one shared Save Pending action for crop corrections and annotation edits.",
@@ -172,9 +173,13 @@ class AnnotationEditorPanel(ttk.Frame):
         self.status_var = tk.StringVar(value=EMPTY_STATE_GUIDANCE)
         self.details_var = tk.StringVar(value=NO_SELECTION_GUIDANCE)
         self.image_position_var = tk.StringVar(value="")
-        self.draw_label_var = tk.StringVar(value=APPROVED_PIDRAY_LABELS[0])
+        self.draw_label_var = tk.StringVar(value=APPROVED_FORMAL_LABELS[0])
+        self.label_choices: tuple[str, ...] = APPROVED_FORMAL_LABELS
         self.zoom_status_var = tk.StringVar(value="100%")
         self._records = []
+        self._record_index_by_image_id: dict[str, int] = {}
+        self._records_dataset_root: Path | None = None
+        self._records_partition_id: str | None = None
         self._current_index = 0
         self._context: SourceImageContext | None = None
         self._image: Image.Image | None = None
@@ -250,6 +255,7 @@ class AnnotationEditorPanel(ttk.Frame):
         self.label_combo = LabelAutocompleteEntry(
             editor_tools,
             variable=self.draw_label_var,
+            labels=self.label_choices,
             width=26,
         )
         self.label_combo.grid(row=0, column=2, padx=(4, 0), sticky="w")
@@ -318,6 +324,9 @@ class AnnotationEditorPanel(ttk.Frame):
 
     def clear(self, message: str = EMPTY_STATE_GUIDANCE) -> None:
         self._records = []
+        self._record_index_by_image_id = {}
+        self._records_dataset_root = None
+        self._records_partition_id = None
         self._context = None
         self._image = None
         self._photo = None
@@ -333,28 +342,46 @@ class AnnotationEditorPanel(ttk.Frame):
         self.canvas.delete("all")
         self._draw_empty(message)
 
+    def set_label_choices(self, labels: tuple[str, ...]) -> None:
+        self.label_choices = labels or APPROVED_FORMAL_LABELS
+        if hasattr(self, "label_combo"):
+            self.label_combo.labels = self.label_choices
+        if self.draw_label_var.get() not in self.label_choices:
+            self.draw_label_var.set(self.label_choices[0])
+
+    def _ensure_partition_records(self, dataset_root: Path, partition_id: str) -> bool:
+        root = Path(dataset_root)
+        if (
+            self._records
+            and self._records_dataset_root == root
+            and self._records_partition_id == partition_id
+        ):
+            return True
+        try:
+            self._records = list(list_partition_source_images(root, partition_id))
+        except Exception as exc:
+            self.clear(f"Could not load partition source images: {exc}")
+            return False
+        self._records_dataset_root = root
+        self._records_partition_id = partition_id
+        self._record_index_by_image_id = {
+            record.image_id: index for index, record in enumerate(self._records)
+        }
+        return True
+
     def load_partition(
         self,
         dataset_root: Path,
         partition_id: str,
         image_id: str | None = None,
     ) -> SourceImageContext | None:
-        try:
-            self._records = list(list_partition_source_images(dataset_root, partition_id))
-        except Exception as exc:
-            self.clear(f"Could not load partition source images: {exc}")
+        if not self._ensure_partition_records(dataset_root, partition_id):
             return None
         if not self._records:
             self.clear(f"No source images found in {partition_id}.")
             return None
         selected_id = image_id or self.state.active_source_image_id or self.state.selected_image_id
-        index = 0
-        if selected_id:
-            for candidate_index, record in enumerate(self._records):
-                if record.image_id == selected_id:
-                    index = candidate_index
-                    break
-        self._current_index = index
+        self._current_index = self._record_index_by_image_id.get(str(selected_id), 0)
         return self._load_current_record()
 
     def load_crop(
@@ -368,11 +395,8 @@ class AnnotationEditorPanel(ttk.Frame):
         except Exception as exc:
             self.clear(f"Source context unavailable: {exc}")
             return None
-        self._records = list(list_partition_source_images(dataset_root, partition_id))
-        for index, record in enumerate(self._records):
-            if record.image_id == context.image_id:
-                self._current_index = index
-                break
+        self._ensure_partition_records(dataset_root, partition_id)
+        self._current_index = self._record_index_by_image_id.get(context.image_id, self._current_index)
         self._set_context(context)
         return context
 
@@ -408,12 +432,24 @@ class AnnotationEditorPanel(ttk.Frame):
         if image_id is None:
             return None
         try:
-            context = load_source_image_context(
-                self.state.dataset_root,
-                self.state.partition_id,
-                image_id,
-                selected_bbox_id=selected_bbox_id or self.state.selected_bbox_id,
-            )
+            if (
+                self._ensure_partition_records(self.state.dataset_root, self.state.partition_id)
+                and image_id in self._record_index_by_image_id
+            ):
+                record = self._records[self._record_index_by_image_id[image_id]]
+                context = load_source_image_context_from_record(
+                    self.state.dataset_root,
+                    self.state.partition_id,
+                    record,
+                    selected_bbox_id=selected_bbox_id or self.state.selected_bbox_id,
+                )
+            else:
+                context = load_source_image_context(
+                    self.state.dataset_root,
+                    self.state.partition_id,
+                    image_id,
+                    selected_bbox_id=selected_bbox_id or self.state.selected_bbox_id,
+                )
         except Exception as exc:
             self.status_var.set(f"Could not reload source image {image_id}: {exc}")
             return None
@@ -425,10 +461,10 @@ class AnnotationEditorPanel(ttk.Frame):
             return None
         record = self._records[self._current_index]
         try:
-            context = load_source_image_context(
+            context = load_source_image_context_from_record(
                 self.state.dataset_root,
                 self.state.partition_id,
-                record.image_id,
+                record,
             )
         except Exception as exc:
             self.status_var.set(f"Could not load source image {record.image_id}: {exc}")
@@ -540,9 +576,9 @@ class AnnotationEditorPanel(ttk.Frame):
         if self._context is None or selected is None:
             self.status_var.set("Select a bounding box before relabeling.")
             return
-        label = selected_approved_label(self.draw_label_var.get())
+        label = selected_approved_label(self.draw_label_var.get(), self.label_choices)
         if label is None:
-            self.status_var.set("Type and choose one approved PIDRay label before relabeling.")
+            self.status_var.set("Type and choose one available class label before relabeling.")
             return
         try:
             change = stage_annotation_relabel(
@@ -637,9 +673,9 @@ class AnnotationEditorPanel(ttk.Frame):
             return
         end_point = self._transform.canvas_to_image_point(event.x, event.y)
         try:
-            label = selected_approved_label(self.draw_label_var.get())
+            label = selected_approved_label(self.draw_label_var.get(), self.label_choices)
             if label is None:
-                raise ValueError("Type and choose one approved PIDRay label before drawing.")
+                raise ValueError("Type and choose one available class label before drawing.")
             rectangle = normalize_drawn_rectangle(
                 self._context.image_size,
                 self._draw_start_image,

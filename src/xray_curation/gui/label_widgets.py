@@ -4,7 +4,7 @@ import re
 import tkinter as tk
 from tkinter import ttk
 
-from xray_curation.domain.labels import APPROVED_PIDRAY_LABELS
+from xray_curation.domain.labels import APPROVED_FORMAL_LABELS
 
 
 NAVIGATION_KEYS = {
@@ -28,7 +28,7 @@ def _fold_label(value: str) -> str:
 
 def matching_approved_labels(
     query: str,
-    labels: tuple[str, ...] = APPROVED_PIDRAY_LABELS,
+    labels: tuple[str, ...] = APPROVED_FORMAL_LABELS,
 ) -> tuple[str, ...]:
     folded_query = _fold_label(query)
     if not folded_query:
@@ -44,7 +44,7 @@ def matching_approved_labels(
 
 def selected_approved_label(
     value: str,
-    labels: tuple[str, ...] = APPROVED_PIDRAY_LABELS,
+    labels: tuple[str, ...] = APPROVED_FORMAL_LABELS,
 ) -> str | None:
     folded_value = _fold_label(value)
     if not folded_value:
@@ -62,12 +62,16 @@ def should_post_label_dropdown(query: str, matches: tuple[str, ...]) -> bool:
 
 def label_dropdown_values(
     query: str,
-    labels: tuple[str, ...] = APPROVED_PIDRAY_LABELS,
+    labels: tuple[str, ...] = APPROVED_FORMAL_LABELS,
     show_all: bool = False,
 ) -> tuple[str, ...]:
     if show_all or not _fold_label(query):
         return labels
     return matching_approved_labels(query, labels)
+
+
+def visible_label_dropdown_count(match_count: int, max_visible: int) -> int:
+    return max(1, min(match_count, max_visible))
 
 
 def _restore_combobox_typing_focus(combo: ttk.Combobox, cursor_index: int | None = None) -> None:
@@ -107,7 +111,7 @@ def unpost_combobox_dropdown(combo: ttk.Combobox) -> None:
 def attach_label_autocomplete(
     combo: ttk.Combobox,
     variable: tk.StringVar,
-    labels: tuple[str, ...] = APPROVED_PIDRAY_LABELS,
+    labels: tuple[str, ...] = APPROVED_FORMAL_LABELS,
     auto_post: bool = True,
 ) -> None:
     def refresh_values(_event=None) -> None:
@@ -135,7 +139,7 @@ class LabelAutocompleteEntry(ttk.Frame):
         self,
         master,
         variable: tk.StringVar,
-        labels: tuple[str, ...] = APPROVED_PIDRAY_LABELS,
+        labels: tuple[str, ...] = APPROVED_FORMAL_LABELS,
         width: int = 22,
         max_visible: int = 8,
     ) -> None:
@@ -157,6 +161,7 @@ class LabelAutocompleteEntry(ttk.Frame):
 
         self._popup: tk.Toplevel | None = None
         self._listbox: tk.Listbox | None = None
+        self._scrollbar: ttk.Scrollbar | None = None
 
         self.entry.bind("<KeyRelease>", self._on_key_release, add="+")
         self.entry.bind("<Down>", self._focus_listbox, add="+")
@@ -211,11 +216,11 @@ class LabelAutocompleteEntry(ttk.Frame):
         if self._popup is None or self._listbox is None:
             return
 
-        visible_matches = matches[: self.max_visible]
-        self._listbox.configure(height=max(1, len(visible_matches)))
+        self._listbox.configure(height=visible_label_dropdown_count(len(matches), self.max_visible))
         self._listbox.delete(0, tk.END)
-        for label in visible_matches:
+        for label in matches:
             self._listbox.insert(tk.END, label)
+        self._listbox.yview_moveto(0)
         self._position_popup()
         self._popup.deiconify()
         self._popup.lift()
@@ -235,14 +240,18 @@ class LabelAutocompleteEntry(ttk.Frame):
             self._popup.attributes("-topmost", True)
         except tk.TclError:
             pass
+        self._scrollbar = ttk.Scrollbar(self._popup, orient=tk.VERTICAL)
         self._listbox = tk.Listbox(
             self._popup,
             activestyle="dotbox",
             exportselection=False,
             relief=tk.SOLID,
             borderwidth=1,
+            yscrollcommand=self._scrollbar.set,
         )
-        self._listbox.pack(fill="both", expand=True)
+        self._scrollbar.configure(command=self._listbox.yview)
+        self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._listbox.pack(side=tk.LEFT, fill="both", expand=True)
         self._listbox.bind("<ButtonRelease-1>", self._choose_from_click, add="+")
         self._listbox.bind("<Return>", self._choose_from_keyboard, add="+")
         self._listbox.bind("<Escape>", self._hide_popup_event, add="+")
@@ -252,9 +261,10 @@ class LabelAutocompleteEntry(ttk.Frame):
         if self._popup is None or self._listbox is None:
             return
         self.update_idletasks()
-        row_height = max(18, self._listbox.winfo_reqheight() // max(1, self._listbox.size()))
+        visible_rows = visible_label_dropdown_count(self._listbox.size(), self.max_visible)
+        row_height = max(18, self._listbox.winfo_reqheight() // visible_rows)
         width = max(self.winfo_width(), self.entry.winfo_width(), 240)
-        height = max(24, row_height * max(1, self._listbox.size()) + 4)
+        height = max(24, row_height * visible_rows + 4)
         x = self.winfo_rootx()
         y = self.entry.winfo_rooty() + self.entry.winfo_height()
         self._popup.geometry(f"{width}x{height}+{x}+{y}")
@@ -319,3 +329,4 @@ class LabelAutocompleteEntry(ttk.Frame):
             self._popup.destroy()
         self._popup = None
         self._listbox = None
+        self._scrollbar = None

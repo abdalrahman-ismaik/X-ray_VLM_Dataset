@@ -5,6 +5,7 @@ from xray_curation.gui.label_widgets import (
     matching_approved_labels,
     selected_approved_label,
     should_post_label_dropdown,
+    visible_label_dropdown_count,
 )
 
 
@@ -45,3 +46,9 @@ def test_label_dropdown_values_can_show_all_labels_when_forced() -> None:
     assert label_dropdown_values("", labels) == labels
     assert label_dropdown_values("bo", labels) == ("Box",)
     assert label_dropdown_values("Box", labels, show_all=True) == labels
+
+
+def test_visible_label_dropdown_count_limits_height_without_limiting_results() -> None:
+    assert visible_label_dropdown_count(0, 8) == 1
+    assert visible_label_dropdown_count(3, 8) == 3
+    assert visible_label_dropdown_count(36, 8) == 8

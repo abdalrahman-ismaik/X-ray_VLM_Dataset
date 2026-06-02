@@ -1,6 +1,6 @@
 # X-ray VLM Dataset Curation
 
-This project provides a local desktop workflow for cleaning and organizing X-ray image annotations for VLM and object-detection research. It refactors the original `GUI_Dataset` scripts into a structured Python package with a Tkinter GUI, reusable services, partitioned crop generation, stable crop identity, and approved PIDRay label standardization.
+This project provides a local desktop workflow for cleaning and organizing X-ray image annotations for VLM and object-detection research. It refactors the original `GUI_Dataset` scripts into a structured Python package with a Tkinter GUI, reusable services, partitioned crop generation, stable crop identity, and approved formal label standardization for PIDRay/SIXray-style datasets.
 
 The refactor is based on the requirements in [spec.md](specs/001-dataset-curation-refactor/spec.md).
 
@@ -26,14 +26,16 @@ The GUI opens maximized by default. The main review area is split into two works
 4. Select one partition, such as `part-0001`.
 5. Click `Generate Crops` for the selected partition, or `Resume` if crops already exist.
 6. After crops load, the Dataset and Partition controls collapse automatically to give the main review area more space.
-7. Use `Image Browser` to browse crop thumbnails, or source-image thumbnails before crops exist. Each browser page shows up to 120 thumbnails with vertical scrolling, and `Previous Page` / `Next Page` moves through the full filtered list. Ctrl/Shift-click selects multiple browser items for bulk class moves, soft-delete, or restore.
+7. Use `Image Browser` to browse crop thumbnails, or source-image thumbnails before crops exist. Each browser page shows up to 120 thumbnails with vertical scrolling, and `Previous Page` / `Next Page` moves through the full filtered list. Ctrl/Shift-click selects multiple browser items for bulk class moves, soft-delete, restore, approve, or unapprove.
 8. Use the `Image Browser` zoom slider to enlarge thumbnails and reduce the number of images per row.
 9. Double-click an image in `Image Browser`, or select a crop from the table, to open `Image Viewer`.
 10. `Image Viewer` contains only the source image preview with Annotation Editor tools and the selected crop preview.
 11. Scroll over the source image to zoom; drag the zoomed background, middle mouse, or right mouse to pan around the image.
-12. In Annotation Editor mode, select boxes directly; when a selected bounding box has a generated crop, the crop preview updates to that linked crop. Cycle overlapping boxes with repeated clicks, use `Draw Box` with an approved PIDRay label, move or resize selected boxes, `Relabel Box`, `Delete Box`, or `Cancel Box Edit`.
+12. In Annotation Editor mode, select boxes directly; when a selected bounding box has a generated crop, the crop preview updates to that linked crop. Cycle overlapping boxes with repeated clicks, use `Draw Box` with an approved formal label, move or resize selected boxes, `Relabel Box`, `Delete Box`, or `Cancel Box Edit`.
 13. Review the shared `Pending` tab and click `Save Pending` when crop corrections and annotation edits are correct.
 14. Saves are atomic, and saved crop-level or annotation-editor edits trigger affected-image-only crop refresh when a crop manifest exists.
+
+The `Review` filter is `Unapproved` by default. Click `Approve Selected` after a thumbnail/crop has been checked and needs no more work; the item is saved to `review_state.json` for the selected partition and hidden from normal browsing/navigation. Change `Review` to `Approved` or `All` to audit completed work or undo approval with `Unapprove Selected`.
 
 For a safe test run without touching the main dataset:
 
@@ -132,9 +134,9 @@ Destructive changes use safer workflows:
 - save operations write annotation JSON atomically
 - utilities guard against stale unsaved edits
 
-### Integrated Utilities
+### Integrated Services
 
-The GUI now exposes utility workflows that previously required separate scripts:
+The refactor keeps utility workflows as reusable services and compatibility wrappers:
 
 - missing-crop detection
 - external moved-crop import/apply
@@ -142,7 +144,7 @@ The GUI now exposes utility workflows that previously required separate scripts:
 - refresh changed crops
 - save pending changes
 
-These operations run against the selected partition and produce reviewable summaries.
+The main GUI focuses on browsing, annotation editing, class management, pending changes, and selected-partition review. Service-backed utilities still run against selected partitions and produce reviewable summaries when called from wrappers or future UI surfaces.
 
 ### Efficient Resume and Refresh
 
@@ -162,9 +164,16 @@ dataset/curation/
 
 When annotations change after crops were generated, the app can refresh only affected images instead of rebuilding the whole partition. Refresh operations also remove stale crop files from old class/status folders when labels or soft-delete status changed, so the folder view stays aligned with saved annotations and the crop manifest.
 
-### Approved PIDRay Labels
+### Approved Formal Labels
 
-The approved class labels are centralized in `src/xray_curation/domain/labels.py`.
+The approved class labels are centralized in `src/xray_curation/domain/labels.py`. The built-in formal list includes the original PIDRay class vocabulary plus the SIXray prohibited-item classes:
+
+- `Gun`
+- `Knife`
+- `Wrench`
+- `Pliers`
+- `Scissors`
+- `Hammer`
 
 Labels use spaces, not underscores. For example:
 
@@ -220,12 +229,32 @@ Use this sequence for normal review work:
 4. Select one partition from the partition dropdown.
 5. Click `Resume` if crops already exist for that partition. Click `Generate Crops` only when that selected partition has no crops yet.
 6. Use `Image Browser` to visually browse thumbnails. Double-click an item to open it in `Image Viewer`.
-7. Use the right-side `Crops` filters to choose the class/status/search sequence for thumbnails and Previous/Next crop navigation.
-8. The right-side crop table shows the generated items inside the image currently open in `Image Viewer`, so you can select and edit different boxes from that same source image.
-9. Use the `Image Viewer` tab to inspect the full source image, select bounding boxes, draw boxes, move/resize boxes, relabel, or delete boxes.
-10. Every correction is staged first. Nothing important is written until you use `Save Pending`.
-11. Open the right-side `Pending` tab before saving. If the list looks wrong, cancel the selected crop edit, cancel the selected box edit, restore, or restart that edit before saving.
-12. Click `Save Pending` when the pending list is correct.
+7. Use the right-side `Crops` filters to choose the class/status/search sequence for thumbnails and Previous/Next crop navigation. The `Review` filter starts on `Unapproved`, which hides work already marked as approved.
+8. When an item is correct and needs no more review, select it in `Image Browser` and click `Approve Selected`. Approval is saved immediately for the selected partition; it does not change labels, annotations, crop files, or original images.
+9. Change `Review` to `Approved` or `All` when you want to inspect completed items or use `Unapprove Selected` to bring an item back into the unapproved queue.
+10. The right-side crop table shows the generated items inside the image currently open in `Image Viewer`, so you can select and edit different boxes from that same source image.
+11. Use the `Image Viewer` tab to inspect the full source image, select bounding boxes, draw boxes, move/resize boxes, relabel, or delete boxes.
+12. Every correction is staged first. Nothing important is written until you use `Save Pending`.
+13. Open the right-side `Pending` tab before saving. If the list looks wrong, cancel the selected crop edit, cancel the selected box edit, restore, or restart that edit before saving.
+14. Click `Save Pending` when the pending list is correct.
+
+### What Approval Means
+
+Approval is a review-progress marker. It is separate from `Save Pending`.
+
+When you click `Approve Selected`:
+
+- the selected crop IDs or source image IDs are written to `curation/partitions/<partition>/review_state.json`;
+- original images are not modified;
+- annotation JSON files are not modified;
+- crop files and class folders are not moved;
+- the item disappears from the default `Review = Unapproved` browser and crop navigation.
+
+Use `Review = Approved` to see only completed items, or `Review = All` to see both approved and unapproved items. Use `Unapprove Selected` if an item needs to be reviewed again.
+
+Right-panel crop actions also work from the `Image Browser` tab: select one or more generated crop thumbnails, then use `Relabel`, `Soft Delete`, `Restore`, `Approve`, or `Unapprove`. If no browser thumbnails are selected, those actions use the selected crop row in the right-side `Crops` table.
+
+`Relabel` is the class-change action. It updates the source annotation label, updates the crop manifest label, and moves the saved crop file to `crops/<New Class Label>/` after `Save Pending`. The old `Move Group` action was a legacy duplicate of this behavior and is no longer shown in the selected-crop actions.
 
 ### What Happens When You Use Soft Delete
 
@@ -261,7 +290,7 @@ Use `Delete Box` in the Annotation Editor only when the bounding box should be r
 
 `Save Pending` applies all staged changes together:
 
-- Crop `Relabel` / `Move Group`: updates the source box label, crop manifest label, and active class folder.
+- Crop `Relabel`: updates the source box label, crop manifest label, and active class folder.
 - Relabeled crop files move to the matching `crops/<New Class Label>/` folder after saving.
 - `Rename`: stores a review display name in annotation flags and the crop manifest; the display name is preserved when affected crops are refreshed.
 - `Soft Delete`: marks the box and crop manifest record as `soft_deleted` and moves the crop file to `crops/_soft_deleted/<Class Label>/`.
@@ -377,9 +406,9 @@ The editor workflow is:
 1. Use `Previous Crop` and `Next Crop` to move through the current filtered crop list when crops are loaded. Before crops exist, these controls fall back to source-image browsing.
 2. Select a crop from the crop table when crops exist; crop selection loads the source context and highlights the matching bounding box.
 3. Click an existing bounding box to select it. If the selected bounding box has a generated crop, the crop preview switches to that crop automatically. When boxes overlap, repeated clicks at the same canvas point cycle through the overlapping boxes.
-4. Use `Draw Box`, drag a rectangle in any direction, and choose an approved PIDRay label for the new annotation.
+4. Use `Draw Box`, drag a rectangle in any direction, and choose an approved formal label for the new annotation.
 5. Drag the selected box body to move it, or drag a corner handle to resize it.
-6. Use `Relabel Box` to change a selected box label to an approved PIDRay label.
+6. Use `Relabel Box` to change a selected box label to an approved formal label.
 7. Use `Delete Box` to stage deletion of a selected box.
 8. Use `Cancel Box Edit` to remove pending edits for the selected box before saving.
 9. Review all crop corrections and annotation-editor edits in the same `Pending` tab.
@@ -396,7 +425,6 @@ Select a crop, then use:
 
 - `Relabel`
 - `Rename`
-- `Move Group`
 - `Soft Delete`
 - `Restore`
 - `Cancel Selected`
@@ -404,20 +432,17 @@ Select a crop, then use:
 
 Changes are staged first. They are written to annotation JSON only when you save pending changes.
 
-### 9. Run Tools From The GUI
+### 9. Manage Classes
 
-Open the right-side `Tools` tab for:
+Open the right-side `Classes` tab to see the available class labels:
 
-- missing-crop detection
-- external moved-crop import
-- refresh
+- built-in formal labels, including PIDRay and SIXray classes
+- dataset-specific custom labels
+- labels currently present in the loaded crop manifest
 
-Open the label standardization area to:
+To add a custom class, type the class name and click `Add Class`. The GUI stores custom classes in `dataset/curation/custom_labels.json`, keeps underscores converted to spaces, and adds the class to the relabel and annotation-editor dropdowns.
 
-- preview label standardization
-- apply unambiguous approved-label mappings
-
-Unknown labels are reported and left for review.
+Use custom classes only when your research workflow truly needs a class outside the built-in formal vocabulary. Label standardization uses the fixed built-in formal list; custom labels remain dataset-specific reviewer choices and are not auto-standardized.
 
 ### 10. Resume Or Refresh Work
 

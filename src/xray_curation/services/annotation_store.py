@@ -175,7 +175,7 @@ def _apply_annotation_add(annotation: dict[str, Any], change: PendingChange) -> 
     image_id = str(change.payload["image_id"])
     label = str(change.payload["label"])
     if not is_approved_label(label):
-        raise AnnotationStoreError(f"New boxes require an approved PIDRay label: {label}")
+        raise AnnotationStoreError(f"New boxes require an approved formal label: {label}")
     points = change.payload["points"]
     rectangle = normalize_rectangle(((points[0], points[1]), (points[2], points[3])))
     if not is_valid_rectangle(rectangle):
@@ -215,7 +215,7 @@ def _apply_change(annotation: dict[str, Any], change: PendingChange) -> str:
     elif change.operation == ANNOTATION_RELABEL:
         label = str(change.payload["label"])
         if not is_approved_label(label):
-            raise AnnotationStoreError(f"Existing boxes require an approved PIDRay label: {label}")
+            raise AnnotationStoreError(f"Existing boxes require an approved formal label: {label}")
         shape["label"] = label
         flags["curation_status"] = "active"
     elif change.operation == ANNOTATION_DELETE:

@@ -23,6 +23,7 @@ from xray_curation.services.dataset_index import (
     read_dataset_manifest,
     summarize_partition_state,
 )
+from xray_curation.services.validation import ensure_no_unsaved_changes
 
 
 def partition_values_from_manifest(manifest: dict) -> list[str]:
@@ -67,6 +68,13 @@ def startup_partition_index(
 
 def should_handle_save_shortcut(modal_dialog_active: bool) -> bool:
     return not modal_dialog_active
+
+
+def pending_operation_blocking_message(pending_changes, operation: str) -> str | None:
+    result = ensure_no_unsaved_changes(pending_changes, operation)
+    if result.success:
+        return None
+    return "\n".join(result.errors)
 
 
 class CurationApp(ttk.Frame):
@@ -229,7 +237,18 @@ class CurationApp(ttk.Frame):
         self.action_buttons.append(button)
         return button
 
+    def _guard_no_pending_changes(self, operation: str) -> bool:
+        message = pending_operation_blocking_message(self.state.pending_changes, operation)
+        if message is None:
+            return True
+        self.status_var.set(message)
+        self.progress_text_var.set("Blocked")
+        messagebox.showwarning("Unsaved Pending Changes", message)
+        return False
+
     def _browse(self) -> None:
+        if not self._guard_no_pending_changes("changing the dataset root"):
+            return
         selected = filedialog.askdirectory(title="Select dataset root folder")
         if selected:
             self.dataset_var.set(selected)
@@ -360,6 +379,8 @@ class CurationApp(ttk.Frame):
         return callback
 
     def _index_dataset(self) -> None:
+        if not self._guard_no_pending_changes("indexing the dataset"):
+            return
         dataset = Path(self.dataset_var.get())
         size = int(self.partition_size_var.get())
         self._update_setup_summary()
@@ -399,6 +420,8 @@ class CurationApp(ttk.Frame):
         partition_id = self._selected_partition_id()
         if partition_id is None:
             messagebox.showwarning("No partition", "Index and select a partition first.")
+            return
+        if not self._guard_no_pending_changes("generating crops"):
             return
         dataset = Path(self.dataset_var.get())
         size = int(self.partition_size_var.get())
@@ -446,6 +469,8 @@ class CurationApp(ttk.Frame):
         if partition_id is None:
             messagebox.showwarning("No partition", "Index and select a partition first.")
             return
+        if not self._guard_no_pending_changes("refreshing changed crops"):
+            return
         dataset = Path(self.dataset_var.get())
         size = int(self.partition_size_var.get())
         self._set_busy(f"Refreshing changed crops for {partition_id}...")
@@ -476,6 +501,8 @@ class CurationApp(ttk.Frame):
         partition_id = self._selected_partition_id()
         if partition_id is None:
             messagebox.showwarning("No partition", "Index and select a partition first.")
+            return
+        if not self._guard_no_pending_changes("rebuilding partition crops"):
             return
         dataset = Path(self.dataset_var.get())
         size = int(self.partition_size_var.get())

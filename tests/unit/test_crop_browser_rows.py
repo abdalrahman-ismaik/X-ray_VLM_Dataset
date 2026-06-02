@@ -5,6 +5,8 @@ from xray_curation.gui.crop_browser import (
     browser_page_count,
     browser_page_for_item_index,
     browser_page_slice,
+    browser_selected_crop_ids,
+    browser_selected_source_image_ids,
     browser_grid_position,
     quantized_browser_grid_layout,
     centered_window_position,
@@ -14,9 +16,17 @@ from xray_curation.gui.crop_browser import (
     crops_for_active_image,
     navigation_anchor_after_crop_selection,
     right_panel_width,
+    review_filter_mode,
+    save_pending_refresh_options,
     save_pending_issue_message,
     save_pending_success_message,
+    should_open_viewer_for_tree_selection,
     unique_crop_row_id,
+)
+from xray_curation.services.review_state import (
+    REVIEW_FILTER_ALL,
+    REVIEW_FILTER_APPROVED,
+    REVIEW_FILTER_UNAPPROVED,
 )
 
 
@@ -69,6 +79,41 @@ def test_right_panel_width_uses_twenty_percent_with_minimum() -> None:
     assert right_panel_width(1100) == 220
     assert right_panel_width(1920) == 384
     assert right_panel_width(800) == 220
+
+
+def test_review_filter_mode_defaults_to_unapproved() -> None:
+    assert review_filter_mode("Unapproved") == REVIEW_FILTER_UNAPPROVED
+    assert review_filter_mode("Approved") == REVIEW_FILTER_APPROVED
+    assert review_filter_mode("All") == REVIEW_FILTER_ALL
+    assert review_filter_mode("unexpected") == REVIEW_FILTER_UNAPPROVED
+
+
+def test_programmatic_filter_selection_does_not_force_viewer_tab() -> None:
+    assert should_open_viewer_for_tree_selection(True, False) is True
+    assert should_open_viewer_for_tree_selection(True, True) is False
+    assert should_open_viewer_for_tree_selection(False, True) is False
+
+
+def test_save_pending_refresh_does_not_force_viewer_context() -> None:
+    assert save_pending_refresh_options() == {
+        "select_first": False,
+        "reset_browser_page": False,
+        "focus_active_browser_item": False,
+        "load_selected_context": False,
+    }
+
+
+def test_browser_selected_ids_keep_order_and_ignore_wrong_item_types() -> None:
+    items = [
+        {"kind": "crop", "id": "crop-a", "image_id": "image-1"},
+        {"kind": "source", "id": "image-2", "image_id": "image-2"},
+        {"kind": "crop", "id": "crop-a", "image_id": "image-1"},
+        {"kind": "crop", "id": "crop-b", "image_id": "image-3"},
+        {"kind": "source", "id": "image-2", "image_id": "image-2"},
+    ]
+
+    assert browser_selected_crop_ids(items) == ("crop-a", "crop-b")
+    assert browser_selected_source_image_ids(items) == ("image-2",)
 
 
 def test_browser_page_count_keeps_120_items_per_page() -> None:

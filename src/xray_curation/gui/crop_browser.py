@@ -6,16 +6,15 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from PIL import Image, ImageTk
 
-from xray_curation.domain.labels import APPROVED_PIDRAY_LABELS
+from xray_curation.domain.labels import APPROVED_FORMAL_LABELS, normalize_label_text
 from xray_curation.gui.annotation_editor import AnnotationEditorPanel
 from xray_curation.gui.label_widgets import (
     LabelAutocompleteEntry,
     selected_approved_label,
 )
 from xray_curation.gui.operation_panels import (
-    LabelStandardizationPanel,
+    ClassesPanel,
     PendingChangesPanel,
-    UtilityActionsPanel,
 )
 from xray_curation.gui.state import CurationState
 from xray_curation.gui.workers import run_operation
@@ -34,6 +33,7 @@ from xray_curation.services.crop_generator import refresh_affected_image_crops
 from xray_curation.services.crop_manifest import (
     apply_external_moves,
     crop_manifest_path,
+    crop_records,
     find_crop,
     find_crop_for_bbox,
     preview_external_moves,
@@ -47,6 +47,18 @@ from xray_curation.services.label_standardizer import (
     apply_label_standardization_for_partition,
     preview_label_standardization_for_partition,
 )
+from xray_curation.services.label_catalog import add_custom_label, load_custom_labels
+from xray_curation.services.review_state import (
+    REVIEW_FILTER_ALL,
+    REVIEW_FILTER_APPROVED,
+    REVIEW_FILTER_UNAPPROVED,
+    crop_is_approved,
+    filter_crops_by_review_state,
+    image_is_approved,
+    load_review_state,
+    set_review_approval,
+    write_review_state,
+)
 from xray_curation.services.validation import (
     ensure_no_unsaved_changes,
     summarize_commit_and_refresh,
@@ -56,6 +68,10 @@ from xray_curation.services.validation import (
 
 ALL_CLASSES = "All Classes"
 ALL_STATUS = "All"
+REVIEW_UNAPPROVED = "Unapproved"
+REVIEW_APPROVED = "Approved"
+REVIEW_ALL = "All"
+REVIEW_FILTER_VALUES = (REVIEW_UNAPPROVED, REVIEW_ALL, REVIEW_APPROVED)
 THUMBNAIL_PAGE_SIZE = 120
 THUMBNAIL_CARD_WIDTH = 132
 THUMBNAIL_CARD_HEIGHT = 112
@@ -79,9 +95,17 @@ GUI_HOW_TO_TEXT = """Typical workflow
 7. Review the Pending tab.
 8. Click Save Pending or press Ctrl+S only when the pending list looks correct.
 
+Approved review filter
+
+Use Approve Selected when a crop or source image is already checked and needs no more work. Approval is saved immediately in the selected partition's review_state.json file. It does not change labels, annotations, crop files, or original images.
+
+The Review filter is Unapproved by default, so approved items disappear from the browser and Previous/Next crop navigation. Change Review to Approved or All when you want to audit completed items or undo approval with Unapprove Selected.
+
 Right panel list
 
 The Crops table shows all generated items in the image currently open in Image Viewer. The Class, Status, and Search filters still control the browser thumbnails and Previous/Next crop navigation across the selected partition.
+
+Right-panel crop actions use selected browser thumbnails when you are in Image Browser. If no browser thumbnails are selected, they use the selected row in the Crops table.
 
 What Soft Delete means
 
@@ -100,7 +124,7 @@ How it appears afterward
 
 If the Status filter is Active, a soft-deleted crop is hidden. If the Status filter is All or soft_deleted, it can still be reviewed and restored.
 
-Relabel and Move Group move the saved crop file into crops/<New Class Label>/ after Save Pending.
+Relabel changes the annotation label and moves the saved crop file into crops/<New Class Label>/ after Save Pending. The old Move Group action was a legacy duplicate of this relabel/class-change workflow.
 
 Use Delete Box in the annotation editor only when the bounding box itself should be removed from the annotation JSON. Delete Box is stronger than Soft Delete.
 
@@ -145,6 +169,58 @@ def crops_for_active_image(
         status=status,
         text=text,
     )
+
+
+def review_filter_mode(value: str) -> str:
+    if value == REVIEW_APPROVED:
+        return REVIEW_FILTER_APPROVED
+    if value == REVIEW_ALL:
+        return REVIEW_FILTER_ALL
+    return REVIEW_FILTER_UNAPPROVED
+
+
+def should_open_viewer_for_tree_selection(
+    requested_open_viewer: bool,
+    programmatic_selection: bool,
+) -> bool:
+    return requested_open_viewer and not programmatic_selection
+
+
+def save_pending_refresh_options() -> dict[str, bool]:
+    return {
+        "select_first": False,
+        "reset_browser_page": False,
+        "focus_active_browser_item": False,
+        "load_selected_context": False,
+    }
+
+
+def browser_selected_crop_ids(items: list[dict]) -> tuple[str, ...]:
+    crop_ids: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item.get("kind") != "crop":
+            continue
+        crop_id = str(item.get("id", ""))
+        if not crop_id or crop_id in seen:
+            continue
+        crop_ids.append(crop_id)
+        seen.add(crop_id)
+    return tuple(crop_ids)
+
+
+def browser_selected_source_image_ids(items: list[dict]) -> tuple[str, ...]:
+    image_ids: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item.get("kind") != "source":
+            continue
+        image_id = str(item.get("image_id", ""))
+        if not image_id or image_id in seen:
+            continue
+        image_ids.append(image_id)
+        seen.add(image_id)
+    return tuple(image_ids)
 
 
 def crop_id_after_navigation(
@@ -483,7 +559,10 @@ class CropBrowser(ttk.Frame):
         self.state = state
         self.label_var = tk.StringVar(value=ALL_CLASSES)
         self.status_var = tk.StringVar(value=ALL_STATUS)
+        self.review_var = tk.StringVar(value=REVIEW_UNAPPROVED)
         self.query_var = tk.StringVar(value="")
+        self.custom_labels: tuple[str, ...] = ()
+        self.label_choices: tuple[str, ...] = APPROVED_FORMAL_LABELS
         self.status_var_message = tk.StringVar(value="No crop manifest loaded.")
         self.browser_selection_var = tk.StringVar(value="No browser item selected.")
         self.browser_zoom_var = tk.IntVar(value=100)
@@ -503,6 +582,7 @@ class CropBrowser(ttk.Frame):
         self._tree_crop_ids: dict[str, str] = {}
         self._navigation_anchor_crop_id: str | None = None
         self._save_overlay: SavePendingOverlay | None = None
+        self._programmatic_tree_selection = False
         self._build()
 
     def _build(self) -> None:
@@ -534,12 +614,13 @@ class CropBrowser(ttk.Frame):
         self.tabs.grid(row=0, column=0, sticky="nsew")
 
         crops_tab = ttk.Frame(self.tabs, padding=8)
-        tools_tab = ttk.Frame(self.tabs, padding=8)
+        classes_tab = ttk.Frame(self.tabs, padding=8)
         pending_tab = ttk.Frame(self.tabs, padding=8)
         help_tab = ttk.Frame(self.tabs, padding=8)
         crops_tab.columnconfigure(0, weight=1)
         crops_tab.rowconfigure(2, weight=1)
-        tools_tab.columnconfigure(0, weight=1)
+        classes_tab.columnconfigure(0, weight=1)
+        classes_tab.rowconfigure(0, weight=1)
         pending_tab.columnconfigure(0, weight=1)
         pending_tab.rowconfigure(0, weight=1)
         help_tab.columnconfigure(0, weight=1)
@@ -556,20 +637,8 @@ class CropBrowser(ttk.Frame):
             pady=(6, 0),
         )
 
-        self.utility_panel = UtilityActionsPanel(
-            tools_tab,
-            on_missing_crops=self._detect_missing_crops,
-            on_external_moves=self._preview_external_moves,
-            on_refresh=self._reload_current_partition,
-            on_save_pending=self._save_pending,
-        )
-        self.utility_panel.grid(row=0, column=0, sticky="ew")
-        self.label_panel = LabelStandardizationPanel(
-            tools_tab,
-            on_preview=self._preview_label_standardization,
-            on_apply=self._apply_label_standardization,
-        )
-        self.label_panel.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.classes_panel = ClassesPanel(classes_tab, on_add_class=self._add_custom_class)
+        self.classes_panel.grid(row=0, column=0, sticky="nsew")
 
         self.pending_panel = PendingChangesPanel(pending_tab)
         self.pending_panel.grid(row=0, column=0, sticky="nsew")
@@ -577,9 +646,10 @@ class CropBrowser(ttk.Frame):
         self._build_help_tab(help_tab)
 
         self.tabs.add(crops_tab, text="Crops")
-        self.tabs.add(tools_tab, text="Tools")
+        self.tabs.add(classes_tab, text="Classes")
         self.tabs.add(pending_tab, text="Pending")
         self.tabs.add(help_tab, text="How To")
+        self._refresh_label_choices()
 
     def _on_main_split_configure(self, event) -> None:
         width = right_panel_width(event.width)
@@ -606,17 +676,27 @@ class CropBrowser(ttk.Frame):
     def _build_browser_tab(self, parent: ttk.Frame) -> None:
         toolbar = ttk.Frame(parent)
         toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        toolbar.columnconfigure(6, weight=1)
+        toolbar.columnconfigure(8, weight=1)
         ttk.Button(toolbar, text="Open Viewer", command=self._open_selected_browser_item).grid(row=0, column=0)
-        ttk.Button(toolbar, text="Move Class", command=self._bulk_move_group).grid(row=0, column=1, padx=(4, 0))
+        ttk.Button(toolbar, text="Relabel Selected", command=self._bulk_move_group).grid(row=0, column=1, padx=(4, 0))
         ttk.Button(toolbar, text="Soft Delete", command=self._bulk_soft_delete).grid(row=0, column=2, padx=(4, 0))
         ttk.Button(toolbar, text="Restore", command=self._bulk_restore).grid(row=0, column=3, padx=(4, 0))
-        ttk.Button(toolbar, text="Clear Selection", command=self._clear_browser_selection).grid(
+        ttk.Button(toolbar, text="Approve Selected", command=self._approve_selected_browser_items).grid(
             row=0,
             column=4,
             padx=(4, 0),
         )
-        ttk.Label(toolbar, text="Zoom").grid(row=0, column=5, padx=(12, 4), sticky="e")
+        ttk.Button(toolbar, text="Unapprove Selected", command=self._unapprove_selected_browser_items).grid(
+            row=0,
+            column=5,
+            padx=(4, 0),
+        )
+        ttk.Button(toolbar, text="Clear Selection", command=self._clear_browser_selection).grid(
+            row=0,
+            column=6,
+            padx=(4, 0),
+        )
+        ttk.Label(toolbar, text="Zoom").grid(row=0, column=7, padx=(12, 4), sticky="e")
         ttk.Scale(
             toolbar,
             from_=MIN_BROWSER_ZOOM,
@@ -624,16 +704,16 @@ class CropBrowser(ttk.Frame):
             variable=self.browser_zoom_var,
             command=self._on_browser_zoom_changed,
             length=150,
-        ).grid(row=0, column=6, sticky="e")
+        ).grid(row=0, column=8, sticky="e")
         ttk.Label(toolbar, textvariable=self.browser_zoom_text_var, width=12).grid(
             row=0,
-            column=7,
+            column=9,
             padx=(4, 8),
             sticky="e",
         )
         ttk.Label(toolbar, textvariable=self.browser_selection_var).grid(
             row=0,
-            column=8,
+            column=10,
             sticky="e",
             padx=(8, 0),
         )
@@ -719,6 +799,9 @@ class CropBrowser(ttk.Frame):
 
     def clear(self, message: str = "Choose a dataset root and load a partition.") -> None:
         self.state.crop_manifest = None
+        self.state.review_state = None
+        self.custom_labels = ()
+        self.label_choices = APPROVED_FORMAL_LABELS
         self.state.selected_crop_id = None
         self.state.selected_image_id = None
         self.state.active_source_image_id = None
@@ -747,18 +830,20 @@ class CropBrowser(ttk.Frame):
             self.tabs.select(0)
         if hasattr(self, "workspace_tabs"):
             self.workspace_tabs.select(self.browser_tab)
+        self._refresh_label_choices()
 
     def _build_filters(self, parent: ttk.Frame) -> None:
         filters = ttk.LabelFrame(parent, text="Crop Filters", padding=8)
         filters.grid(row=0, column=0, sticky="ew")
         filters.columnconfigure(1, weight=1)
         ttk.Label(filters, text="Class").grid(row=0, column=0, sticky="w")
-        ttk.Combobox(
+        self.class_filter_combo = ttk.Combobox(
             filters,
             textvariable=self.label_var,
-            values=(ALL_CLASSES, *APPROVED_PIDRAY_LABELS),
+            values=(ALL_CLASSES, *self.label_choices),
             state="readonly",
-        ).grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        )
+        self.class_filter_combo.grid(row=0, column=1, sticky="ew", padx=(6, 0))
         ttk.Label(filters, text="Status").grid(row=1, column=0, sticky="w", pady=(6, 0))
         ttk.Combobox(
             filters,
@@ -766,16 +851,23 @@ class CropBrowser(ttk.Frame):
             values=(ALL_STATUS, "active", "soft_deleted"),
             state="readonly",
         ).grid(row=1, column=1, sticky="ew", padx=(6, 0), pady=(6, 0))
-        ttk.Label(filters, text="Search").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(filters, text="Review").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Combobox(
+            filters,
+            textvariable=self.review_var,
+            values=REVIEW_FILTER_VALUES,
+            state="readonly",
+        ).grid(row=2, column=1, sticky="ew", padx=(6, 0), pady=(6, 0))
+        ttk.Label(filters, text="Search").grid(row=3, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(filters, textvariable=self.query_var).grid(
-            row=2,
+            row=3,
             column=1,
             sticky="ew",
             padx=(6, 0),
             pady=(6, 0),
         )
         ttk.Button(filters, text="Apply Filters", command=self.refresh).grid(
-            row=3,
+            row=4,
             column=0,
             columnspan=2,
             sticky="ew",
@@ -828,10 +920,11 @@ class CropBrowser(ttk.Frame):
         buttons = (
             ("Relabel", self._stage_relabel),
             ("Rename", self._stage_rename),
-            ("Move Group", self._stage_move_group),
             ("Soft Delete", self._stage_soft_delete),
             ("Restore", self._stage_restore),
             ("Cancel Selected", self._cancel_selected),
+            ("Approve", self._approve_selected_crop),
+            ("Unapprove", self._unapprove_selected_crop),
             ("Save Pending", self._save_pending),
         )
         for index, (text, command) in enumerate(buttons):
@@ -859,6 +952,58 @@ class CropBrowser(ttk.Frame):
         text.configure(yscrollcommand=scrollbar.set)
         text.insert("1.0", GUI_HOW_TO_TEXT)
         text.configure(state="disabled")
+
+    def _label_counts(self) -> dict[str, int]:
+        if not self.state.crop_manifest:
+            return {}
+        counts: dict[str, int] = {}
+        for crop in crop_records(self.state.crop_manifest):
+            label = str(crop.get("label", "")).strip()
+            if not label:
+                continue
+            counts[label] = counts.get(label, 0) + 1
+        return counts
+
+    def _refresh_label_choices(self) -> None:
+        if self.state.dataset_root is None:
+            self.custom_labels = ()
+        else:
+            self.custom_labels = load_custom_labels(self.state.dataset_root)
+        self.label_choices = (*APPROVED_FORMAL_LABELS, *self.custom_labels)
+        if self.label_var.get() != ALL_CLASSES and self.label_var.get() not in self.label_choices:
+            self.label_var.set(ALL_CLASSES)
+        if hasattr(self, "class_filter_combo"):
+            self.class_filter_combo.configure(values=(ALL_CLASSES, *self.label_choices))
+        if hasattr(self, "annotation_editor"):
+            self.annotation_editor.set_label_choices(self.label_choices)
+        self._sync_classes_panel()
+
+    def _sync_classes_panel(self) -> None:
+        if not hasattr(self, "classes_panel"):
+            return
+        self.classes_panel.set_labels(
+            APPROVED_FORMAL_LABELS,
+            self.custom_labels,
+            self._label_counts(),
+        )
+
+    def _add_custom_class(self, label: str) -> None:
+        if self.state.dataset_root is None:
+            self.classes_panel.set_status("Load a dataset before adding custom classes.")
+            return
+        try:
+            custom_labels, added = add_custom_label(self.state.dataset_root, label)
+        except ValueError as exc:
+            self.classes_panel.set_status(str(exc))
+            return
+        self.custom_labels = custom_labels
+        self.label_choices = (*APPROVED_FORMAL_LABELS, *self.custom_labels)
+        self._refresh_label_choices()
+        if added:
+            self.classes_panel.clear_entry()
+            self.classes_panel.set_status(f"Added custom class: {normalize_label_text(label)}")
+        else:
+            self.classes_panel.set_status("Class already exists in the available label list.")
 
     def _fit_image(self, image: Image.Image, width: int, height: int) -> Image.Image:
         width = max(width, 1)
@@ -982,6 +1127,7 @@ class CropBrowser(ttk.Frame):
                     "label": str(crop.get("label", "")),
                     "path": str(crop.get("crop_path", "")),
                     "status": str(crop.get("status", "active")),
+                    "approved": crop_is_approved(crop, self.state.review_state),
                 }
             )
         self._set_browser_items(
@@ -1004,18 +1150,27 @@ class CropBrowser(ttk.Frame):
         except Exception:
             self._set_browser_items([], reset_page=reset_page)
             return
+        review_mode = review_filter_mode(self.review_var.get())
+        items = [
+            {
+                "kind": "source",
+                "item_id": f"source:{record.image_id}",
+                "id": record.image_id,
+                "image_id": record.image_id,
+                "label": record.image_id,
+                "path": str(record.image_path),
+                "status": "",
+                "approved": image_is_approved(record.image_id, self.state.review_state),
+            }
+            for record in records
+        ]
         self._set_browser_items(
             [
-                {
-                    "kind": "source",
-                    "item_id": f"source:{record.image_id}",
-                    "id": record.image_id,
-                    "image_id": record.image_id,
-                    "label": record.image_id,
-                    "path": str(record.image_path),
-                    "status": "",
-                }
-                for record in records
+                item
+                for item in items
+                if review_mode == REVIEW_FILTER_ALL
+                or (review_mode == REVIEW_FILTER_APPROVED and item["approved"])
+                or (review_mode == REVIEW_FILTER_UNAPPROVED and not item["approved"])
             ],
             reset_page=reset_page,
             active_kind="source",
@@ -1165,7 +1320,8 @@ class CropBrowser(ttk.Frame):
                 (item["kind"] == "crop" and item["id"] == self.state.selected_crop_id)
                 or (item["kind"] == "source" and item["id"] == self.state.active_source_image_id)
             )
-            outline = "#ff453a" if selected else "#64d2ff" if active else "#4a4a4a"
+            approved = bool(item.get("approved"))
+            outline = "#ff453a" if selected else "#64d2ff" if active else "#3fb950" if approved else "#4a4a4a"
             canvas.create_rectangle(
                 x,
                 y,
@@ -1175,6 +1331,23 @@ class CropBrowser(ttk.Frame):
                 width=3 if selected else 2 if active else 1,
                 fill="#202020",
             )
+            if approved:
+                badge_width = min(78, max(58, card_w - 16))
+                canvas.create_rectangle(
+                    x + 8,
+                    y + 8,
+                    x + 8 + badge_width,
+                    y + 26,
+                    fill="#1f7a35",
+                    outline="#2ea043",
+                )
+                canvas.create_text(
+                    x + 14,
+                    y + 17,
+                    text="APPROVED",
+                    fill="#ffffff",
+                    anchor=tk.W,
+                )
             path = Path(item["path"])
             if path.is_file():
                 try:
@@ -1268,7 +1441,11 @@ class CropBrowser(ttk.Frame):
         if item["kind"] == "crop":
             self._open_crop_id(item["id"], open_viewer=True)
         elif self.state.dataset_root and self.state.partition_id:
-            self.tree.selection_remove(self.tree.selection())
+            self._programmatic_tree_selection = True
+            try:
+                self.tree.selection_remove(self.tree.selection())
+            finally:
+                self.after_idle(self._clear_programmatic_tree_selection)
             self.state.selected_crop_id = None
             self._navigation_anchor_crop_id = None
             self._set_selected_crop_preview(None)
@@ -1278,8 +1455,13 @@ class CropBrowser(ttk.Frame):
                 image_id=item["image_id"],
             )
             self.workspace_tabs.select(self.viewer_tab)
-            self.refresh(select_first=False, reset_browser_page=False)
-            self._render_thumbnail_grid()
+            self.refresh(
+                select_first=False,
+                reset_browser_page=False,
+                focus_active_browser_item=False,
+                update_browser=False,
+                load_selected_context=False,
+            )
 
     def _open_crop_id(self, crop_id: str, open_viewer: bool = True) -> None:
         self.state.selected_crop_id = crop_id
@@ -1305,12 +1487,22 @@ class CropBrowser(ttk.Frame):
                 self.state.selected_bbox_id = context.selected_bbox_id
         if open_viewer:
             self.workspace_tabs.select(self.viewer_tab)
-        self.refresh(select_first=False, reset_browser_page=False)
+        self.refresh(
+            select_first=False,
+            reset_browser_page=False,
+            focus_active_browser_item=False,
+            update_browser=False,
+            load_selected_context=False,
+        )
         row_id = self._tree_iid_for_crop(crop_id)
         if row_id:
-            self.tree.selection_set(row_id)
-            self.tree.focus(row_id)
-            self.tree.see(row_id)
+            self._programmatic_tree_selection = True
+            try:
+                self.tree.selection_set(row_id)
+                self.tree.focus(row_id)
+                self.tree.see(row_id)
+            finally:
+                self.after_idle(self._clear_programmatic_tree_selection)
 
     def _open_selected_browser_item(self) -> None:
         selected_items = [
@@ -1344,14 +1536,19 @@ class CropBrowser(ttk.Frame):
         else:
             self.browser_selection_var.set("No browser item selected.")
 
+    def _selected_browser_items(self) -> list[dict]:
+        return [
+            item
+            for item in self._browser_all_items
+            if str(item.get("item_id", "")) in self._browser_selected_item_ids
+        ]
+
     def _selected_browser_crops(self) -> list[dict]:
         if not self.state.crop_manifest:
             return []
         crops = []
         seen_crop_ids = set()
-        for item in self._browser_all_items:
-            if str(item.get("item_id", "")) not in self._browser_selected_item_ids:
-                continue
+        for item in self._selected_browser_items():
             if item.get("kind") != "crop":
                 continue
             crop_id = str(item.get("id", ""))
@@ -1364,6 +1561,103 @@ class CropBrowser(ttk.Frame):
                 continue
         return crops
 
+    def _action_crops(self, allow_many: bool = True) -> list[dict]:
+        browser_items = self._selected_browser_items()
+        browser_crops = self._selected_browser_crops()
+        if browser_crops:
+            if not allow_many and len(browser_crops) > 1:
+                self.status_var_message.set("Select one crop for this action, not multiple.")
+                return []
+            return browser_crops
+        if browser_items:
+            self.status_var_message.set("Selected browser item(s) do not have generated crops for this action.")
+            return []
+        crop = self._selected_crop(show_warning=True)
+        return [crop] if crop is not None else []
+
+    def _stage_many_for_action(self, crops: list[dict], operation_name: str, factory) -> None:
+        if not crops:
+            return
+        self._stage_many((factory(crop) for crop in crops), operation_name)
+
+    def _approve_selected_browser_items(self) -> None:
+        self._set_selected_browser_items_approval(True)
+
+    def _unapprove_selected_browser_items(self) -> None:
+        self._set_selected_browser_items_approval(False)
+
+    def _set_selected_browser_items_approval(self, approved: bool) -> None:
+        selected_items = self._selected_browser_items()
+        if not selected_items:
+            self.status_var_message.set("Select thumbnails before changing approval.")
+            return
+        self._set_review_approval(
+            crop_ids=set(browser_selected_crop_ids(selected_items)),
+            image_ids=set(browser_selected_source_image_ids(selected_items)),
+            approved=approved,
+        )
+
+    def _approve_selected_crop(self) -> None:
+        if self._selected_browser_items():
+            self._set_selected_browser_items_approval(True)
+            return
+        crop = self._selected_crop()
+        if crop is None:
+            return
+        self._set_review_approval(crop_ids={str(crop["crop_id"])}, approved=True)
+
+    def _unapprove_selected_crop(self) -> None:
+        if self._selected_browser_items():
+            self._set_selected_browser_items_approval(False)
+            return
+        crop = self._selected_crop()
+        if crop is None:
+            return
+        self._set_review_approval(crop_ids={str(crop["crop_id"])}, approved=False)
+
+    def _set_review_approval(
+        self,
+        *,
+        crop_ids: set[str] | None = None,
+        image_ids: set[str] | None = None,
+        approved: bool,
+    ) -> None:
+        if not self.state.dataset_root or not self.state.partition_id:
+            self.status_var_message.set("Load a partition before changing approval.")
+            return
+        crop_ids = {crop_id for crop_id in (crop_ids or set()) if crop_id}
+        image_ids = {image_id for image_id in (image_ids or set()) if image_id}
+        if not crop_ids and not image_ids:
+            self.status_var_message.set("No crop or source image selected for approval.")
+            return
+        self.state.review_state = set_review_approval(
+            self.state.review_state,
+            partition_id=self.state.partition_id,
+            crop_ids=crop_ids,
+            image_ids=image_ids,
+            approved=approved,
+        )
+        write_review_state(self.state.dataset_root, self.state.partition_id, self.state.review_state)
+        action = "Approved" if approved else "Unapproved"
+        total = len(crop_ids) + len(image_ids)
+        self._browser_selected_item_ids = set()
+        if self.state.crop_manifest:
+            self.refresh(
+                select_first=False,
+                reset_browser_page=False,
+                focus_active_browser_item=False,
+            )
+        else:
+            self._set_source_thumbnails(
+                self.state.dataset_root,
+                self.state.partition_id,
+                reset_page=False,
+                focus_active_item=False,
+            )
+        self.status_var_message.set(
+            f"{action} {total} item(s). Use Review={REVIEW_ALL} or {REVIEW_APPROVED} to audit checked items."
+        )
+
     def _stage_many(self, changes, message: str) -> None:
         count = 0
         for change in changes:
@@ -1375,12 +1669,12 @@ class CropBrowser(ttk.Frame):
     def _bulk_move_group(self) -> None:
         crops = self._selected_browser_crops()
         if not crops:
-            self.status_var_message.set("Select generated crop images before moving classes.")
+            self.status_var_message.set("Select generated crop images before relabeling.")
             return
-        label = self._ask_label("Move Selected Crops")
+        label = self._ask_label("Relabel Selected Crops")
         if not label:
             return
-        self._stage_many((stage_move_group_change(crop, label) for crop in crops), "move change(s)")
+        self._stage_many((stage_relabel_change(crop, label) for crop in crops), "relabel change(s)")
 
     def _bulk_soft_delete(self) -> None:
         crops = self._selected_browser_crops()
@@ -1399,6 +1693,8 @@ class CropBrowser(ttk.Frame):
     def load_partition(self, dataset_root: Path, partition_id: str) -> None:
         self.state.dataset_root = dataset_root
         self.state.partition_id = partition_id
+        self.state.review_state = load_review_state(dataset_root, partition_id)
+        self._refresh_label_choices()
         self.workspace_tabs.select(self.browser_tab)
         self.annotation_editor.load_partition(dataset_root, partition_id)
         self._set_selected_crop_preview(None)
@@ -1438,6 +1734,8 @@ class CropBrowser(ttk.Frame):
         select_first: bool = True,
         reset_browser_page: bool = True,
         focus_active_browser_item: bool = True,
+        update_browser: bool = True,
+        load_selected_context: bool = True,
     ) -> None:
         previous_selection = self.state.selected_crop_id
         self.tree.delete(*self.tree.get_children())
@@ -1445,8 +1743,16 @@ class CropBrowser(ttk.Frame):
         manifest = self.state.crop_manifest
         if not manifest:
             self.filtered_crops = []
+            self._sync_classes_panel()
+            if update_browser and self.state.dataset_root and self.state.partition_id:
+                self._set_source_thumbnails(
+                    self.state.dataset_root,
+                    self.state.partition_id,
+                    reset_page=reset_browser_page,
+                    focus_active_item=focus_active_browser_item,
+                )
             self.status_var_message.set(
-                "No crops to show. Generate crops for the selected partition first."
+                f"No crops to show. Browsing source images with review={self.review_var.get()}."
             )
             return
         label = self.label_var.get()
@@ -1454,11 +1760,17 @@ class CropBrowser(ttk.Frame):
         query_label = None if label == ALL_CLASSES else label
         query_status = None if status == ALL_STATUS else status
         query_text = self.query_var.get() or None
+        review_mode = review_filter_mode(self.review_var.get())
         navigation_crops = query_crops(
             manifest,
             label=query_label,
             status=query_status,
             text=query_text,
+        )
+        navigation_crops = filter_crops_by_review_state(
+            navigation_crops,
+            self.state.review_state,
+            review_mode,
         )
         crops = crops_for_active_image(
             manifest,
@@ -1466,8 +1778,10 @@ class CropBrowser(ttk.Frame):
             status=query_status,
             text=query_text,
         )
+        crops = filter_crops_by_review_state(crops, self.state.review_state, review_mode)
         self.filtered_crops = crops
         self.navigation_crops = navigation_crops
+        self._sync_classes_panel()
         self._navigation_anchor_crop_id = navigation_anchor_after_crop_selection(
             self._navigation_anchor_crop_id,
             previous_selection,
@@ -1478,6 +1792,9 @@ class CropBrowser(ttk.Frame):
             crop_id = str(crop["crop_id"])
             row_id = unique_crop_row_id(crop_id, seen_row_ids)
             self._tree_crop_ids[row_id] = crop_id
+            status_value = str(crop.get("status", "active"))
+            if crop_is_approved(crop, self.state.review_state):
+                status_value = f"{status_value} | approved"
             self.tree.insert(
                 "",
                 tk.END,
@@ -1485,21 +1802,24 @@ class CropBrowser(ttk.Frame):
                 values=(
                     crop.get("label", ""),
                     crop.get("image_id", ""),
-                    crop.get("status", "active"),
+                    status_value,
                 ),
             )
-        self._set_crop_thumbnails(
-            navigation_crops,
-            reset_page=reset_browser_page,
-            focus_active_item=focus_active_browser_item,
-        )
+        if update_browser:
+            self._set_crop_thumbnails(
+                navigation_crops,
+                reset_page=reset_browser_page,
+                focus_active_item=focus_active_browser_item,
+            )
         if self.state.active_source_image_id:
             self.status_var_message.set(
                 f"Showing {len(crops)} item(s) in image {self.state.active_source_image_id}; "
-                f"{len(navigation_crops)} crop(s) in current filter."
+                f"{len(navigation_crops)} crop(s) in current filter; review={self.review_var.get()}."
             )
         else:
-            self.status_var_message.set(f"Showing {len(navigation_crops)} crop(s) in current filter.")
+            self.status_var_message.set(
+                f"Showing {len(navigation_crops)} crop(s) in current filter; review={self.review_var.get()}."
+            )
         children = self.tree.get_children()
         if not children:
             self.state.selected_crop_id = None
@@ -1515,12 +1835,30 @@ class CropBrowser(ttk.Frame):
             self.tree.selection_remove(self.tree.selection())
             self.state.selected_crop_id = None
             self._set_selected_crop_preview(None)
-            self._render_thumbnail_grid()
+            if update_browser:
+                self._render_thumbnail_grid()
             return
-        self.tree.selection_set(selected)
-        self.tree.focus(selected)
-        self.tree.see(selected)
-        self._on_select(open_viewer=False)
+        self._programmatic_tree_selection = True
+        try:
+            self.tree.selection_set(selected)
+            self.tree.focus(selected)
+            self.tree.see(selected)
+        finally:
+            self.after_idle(self._clear_programmatic_tree_selection)
+        if load_selected_context:
+            self._on_select(open_viewer=False)
+        else:
+            self.state.selected_crop_id = self._tree_crop_ids.get(selected, selected)
+            if self.state.crop_manifest and self.state.selected_crop_id:
+                try:
+                    self._set_selected_crop_preview(
+                        find_crop(self.state.crop_manifest, self.state.selected_crop_id)
+                    )
+                except Exception:
+                    self._set_selected_crop_preview(None)
+
+    def _clear_programmatic_tree_selection(self) -> None:
+        self._programmatic_tree_selection = False
 
     def _tree_iid_for_crop(self, crop_id: str | None) -> str | None:
         if crop_id is None:
@@ -1556,6 +1894,14 @@ class CropBrowser(ttk.Frame):
         self._open_crop_id(crop_id, open_viewer=True)
 
     def _on_select(self, _event=None, open_viewer: bool = True) -> None:
+        if _event is not None and not self._programmatic_tree_selection:
+            self._browser_selected_item_ids = set()
+            self._update_browser_selection_status()
+            self._render_thumbnail_grid()
+        open_viewer = should_open_viewer_for_tree_selection(
+            open_viewer,
+            _event is not None and self._programmatic_tree_selection,
+        )
         selection = self.tree.selection()
         row_id = selection[0] if selection else None
         self.state.selected_crop_id = self._tree_crop_ids.get(row_id, row_id) if row_id else None
@@ -1588,9 +1934,10 @@ class CropBrowser(ttk.Frame):
     def _open_full_preview(self) -> None:
         self.annotation_editor.open_full_source()
 
-    def _selected_crop(self) -> dict | None:
+    def _selected_crop(self, show_warning: bool = True) -> dict | None:
         if not self.state.crop_manifest or not self.state.selected_crop_id:
-            messagebox.showwarning("No crop selected", "Select a crop first.")
+            if show_warning:
+                messagebox.showwarning("No crop selected", "Select a crop first.")
             return None
         return find_crop(self.state.crop_manifest, self.state.selected_crop_id)
 
@@ -1629,9 +1976,9 @@ class CropBrowser(ttk.Frame):
         dialog.grab_set()
         dialog.columnconfigure(0, weight=1)
 
-        initial = selected_approved_label(initial_label or "") or ""
+        initial = selected_approved_label(initial_label or "", self.label_choices) or ""
         label_var = tk.StringVar(value=initial)
-        ttk.Label(dialog, text="Type to search approved PIDRay labels").grid(
+        ttk.Label(dialog, text="Type to search available class labels").grid(
             row=0,
             column=0,
             sticky="w",
@@ -1641,7 +1988,7 @@ class CropBrowser(ttk.Frame):
         label_entry = LabelAutocompleteEntry(
             dialog,
             variable=label_var,
-            labels=APPROVED_PIDRAY_LABELS,
+            labels=self.label_choices,
             width=34,
         )
         label_entry.grid(row=1, column=0, sticky="ew", padx=12)
@@ -1650,11 +1997,11 @@ class CropBrowser(ttk.Frame):
         buttons.grid(row=2, column=0, sticky="e", padx=12, pady=12)
 
         def choose() -> None:
-            label = selected_approved_label(label_var.get())
+            label = selected_approved_label(label_var.get(), self.label_choices)
             if label is None:
                 messagebox.showwarning(
-                    "Choose approved label",
-                    "Type part of a label, then choose one approved PIDRay label from the dropdown.",
+                    "Choose class label",
+                    "Type part of a label, then choose one available class label from the dropdown.",
                     parent=dialog,
                 )
                 label_entry.focus_entry()
@@ -1677,54 +2024,70 @@ class CropBrowser(ttk.Frame):
         return selected["value"]
 
     def _stage_relabel(self) -> None:
-        crop = self._selected_crop()
-        if crop is None:
+        crops = self._action_crops()
+        if not crops:
             return
-        label = self._ask_label("Relabel Crop", str(crop.get("label", "")))
+        initial_label = str(crops[0].get("label", "")) if len(crops) == 1 else None
+        label = self._ask_label("Relabel Crop", initial_label)
         if label:
-            self._stage(stage_relabel_change(crop, label))
+            self._stage_many_for_action(
+                crops,
+                "relabel change(s)",
+                lambda crop: stage_relabel_change(crop, label),
+            )
 
     def _stage_rename(self) -> None:
-        crop = self._selected_crop()
-        if crop is None:
+        crops = self._action_crops(allow_many=False)
+        if not crops:
             return
         name = simpledialog.askstring("Rename Crop", "Display name")
         if name and name.strip():
-            self._stage(stage_rename_change(crop, name.strip()))
+            self._stage(stage_rename_change(crops[0], name.strip()))
 
     def _stage_move_group(self) -> None:
-        crop = self._selected_crop()
-        if crop is None:
+        crops = self._action_crops()
+        if not crops:
             return
-        label = self._ask_label("Move Crop Group", str(crop.get("label", "")))
+        initial_label = str(crops[0].get("label", "")) if len(crops) == 1 else None
+        label = self._ask_label("Move Crop Group", initial_label)
         if label:
-            self._stage(stage_move_group_change(crop, label))
+            self._stage_many_for_action(
+                crops,
+                "move change(s)",
+                lambda crop: stage_move_group_change(crop, label),
+            )
 
     def _stage_soft_delete(self) -> None:
-        crop = self._selected_crop()
-        if crop is not None:
-            self._stage(stage_soft_delete_change(crop))
+        self._stage_many_for_action(
+            self._action_crops(),
+            "soft-delete change(s)",
+            stage_soft_delete_change,
+        )
 
     def _stage_restore(self) -> None:
-        crop = self._selected_crop()
-        if crop is not None:
-            self._stage(stage_restore_change(crop))
+        self._stage_many_for_action(
+            self._action_crops(),
+            "restore change(s)",
+            stage_restore_change,
+        )
 
     def _cancel_selected(self) -> None:
-        crop = self._selected_crop()
-        if crop is None:
+        crops = self._action_crops()
+        if not crops:
             return
         before = len(self.state.pending_changes)
+        crop_ids = {str(crop["crop_id"]) for crop in crops}
         self.state.pending_changes = [
             change
             for change in self.state.pending_changes
-            if change.target_id != crop["crop_id"]
+            if change.target_id not in crop_ids
         ]
         if len(self.state.pending_changes) == before:
-            change_id = f"relabel:{crop['crop_id']}"
-            self.state.pending_changes = cancel_pending_change(self.state.pending_changes, change_id)
+            for crop_id in crop_ids:
+                change_id = f"relabel:{crop_id}"
+                self.state.pending_changes = cancel_pending_change(self.state.pending_changes, change_id)
         self.pending_panel.set_changes(self.state.pending_changes)
-        self.status_var_message.set("Cancelled pending changes for selected crop.")
+        self.status_var_message.set(f"Cancelled pending changes for {len(crops)} selected crop(s).")
 
     def save_pending(self) -> None:
         self._save_pending()
@@ -1742,6 +2105,14 @@ class CropBrowser(ttk.Frame):
     def _show_save_issue_overlay(self, title: str, errors: list[str] | tuple[str, ...], fallback: str) -> None:
         overlay = self._start_save_overlay("Checking pending changes...")
         overlay.show_result(title, save_pending_issue_message(errors, fallback), kind="error")
+
+    def _restore_workspace_tab(self, tab_id: str) -> None:
+        if not tab_id:
+            return
+        try:
+            self.workspace_tabs.select(tab_id)
+        except tk.TclError:
+            pass
 
     def _save_pending(self) -> None:
         if self.state.worker_status == "saving_pending":
@@ -1765,6 +2136,7 @@ class CropBrowser(ttk.Frame):
         dataset_root = self.state.dataset_root
         partition_id = self.state.partition_id
         selected_bbox_id = self.state.selected_bbox_id
+        active_workspace_tab = self.workspace_tabs.select()
         self.state.worker_status = "saving_pending"
         self.state.worker_progress = 0
         self.status_var_message.set("Saving pending changes...")
@@ -1825,11 +2197,8 @@ class CropBrowser(ttk.Frame):
             summary_text = save_pending_success_message(summary)
             self.status_var_message.set(summary_text)
             self.annotation_editor.reload_active_image(selected_bbox_id=selected_bbox_id)
-            self.refresh(
-                select_first=False,
-                reset_browser_page=False,
-                focus_active_browser_item=False,
-            )
+            self.refresh(**save_pending_refresh_options())
+            self._restore_workspace_tab(active_workspace_tab)
             overlay.show_result(
                 "Save Pending Complete",
                 f"{summary_text}\nPending queue cleared and the active image was reloaded.",

@@ -98,7 +98,7 @@ class UtilityActionsPanel(ttk.LabelFrame):
 class LabelStandardizationPanel(ttk.LabelFrame):
     def __init__(self, master, on_preview, on_apply) -> None:
         super().__init__(master, text="Label Standardization", padding=8)
-        self.status_var = tk.StringVar(value="Approved PIDRay labels are available.")
+        self.status_var = tk.StringVar(value="Approved formal labels are available.")
         ttk.Button(self, text="Preview Labels", command=on_preview).grid(row=0, column=0)
         ttk.Button(self, text="Apply Labels", command=on_apply).grid(row=0, column=1, padx=4)
         ttk.Label(self, textvariable=self.status_var).grid(
@@ -117,3 +117,79 @@ class LabelStandardizationPanel(ttk.LabelFrame):
         keys = ("checked_count", "proposed_count", "unknown_count", "labels_updated", "files_written")
         parts = [f"{key}={summary[key]}" for key in keys if key in summary]
         self.status_var.set(f"{operation}: " + ", ".join(parts))
+
+
+class ClassesPanel(ttk.LabelFrame):
+    def __init__(self, master, on_add_class) -> None:
+        super().__init__(master, text="Classes", padding=8)
+        self.on_add_class = on_add_class
+        self.new_label_var = tk.StringVar(value="")
+        self.status_var = tk.StringVar(value="Built-in formal classes are loaded.")
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+
+        add_row = ttk.Frame(self)
+        add_row.grid(row=0, column=0, sticky="ew")
+        add_row.columnconfigure(0, weight=1)
+        self.entry = ttk.Entry(add_row, textvariable=self.new_label_var)
+        self.entry.grid(row=0, column=0, sticky="ew")
+        ttk.Button(add_row, text="Add Class", command=self._add_class).grid(
+            row=0,
+            column=1,
+            padx=(6, 0),
+        )
+        self.entry.bind("<Return>", lambda _event: self._add_class(), add="+")
+
+        list_frame = ttk.Frame(self)
+        list_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+        self.listbox = tk.Listbox(list_frame, height=12, exportselection=False)
+        self.listbox.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.listbox.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.listbox.configure(yscrollcommand=scrollbar.set)
+
+        ttk.Label(self, textvariable=self.status_var, wraplength=260).grid(
+            row=2,
+            column=0,
+            sticky="ew",
+            pady=(8, 0),
+        )
+
+    def _add_class(self) -> None:
+        label = self.new_label_var.get()
+        self.on_add_class(label)
+
+    def clear_entry(self) -> None:
+        self.new_label_var.set("")
+
+    def set_status(self, message: str) -> None:
+        self.status_var.set(message)
+
+    def set_labels(
+        self,
+        approved_labels: tuple[str, ...],
+        custom_labels: tuple[str, ...],
+        label_counts: dict[str, int] | None = None,
+    ) -> None:
+        label_counts = label_counts or {}
+        self.listbox.delete(0, tk.END)
+        for label in approved_labels:
+            count = label_counts.get(label, 0)
+            suffix = f" ({count})" if count else ""
+            self.listbox.insert(tk.END, f"{label}{suffix}    [Built-in]")
+        for label in custom_labels:
+            count = label_counts.get(label, 0)
+            suffix = f" ({count})" if count else ""
+            self.listbox.insert(tk.END, f"{label}{suffix}    [Custom]")
+        known = set(approved_labels) | set(custom_labels)
+        unknown_labels = sorted(
+            label for label, count in label_counts.items() if count and label not in known
+        )
+        for label in unknown_labels:
+            self.listbox.insert(tk.END, f"{label} ({label_counts[label]})    [In Dataset]")
+        self.status_var.set(
+            f"{len(approved_labels)} built-in class(es), {len(custom_labels)} custom class(es)."
+        )

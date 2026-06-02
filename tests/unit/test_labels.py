@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from xray_curation.domain.labels import (
+    APPROVED_FORMAL_LABELS,
     APPROVED_PIDRAY_LABELS,
+    APPROVED_SIXRAY_LABELS,
     canonical_label,
     is_approved_label,
     label_requires_standardization,
@@ -14,6 +16,21 @@ def test_approved_pidray_labels_use_spaces_not_underscores():
     assert "Electrical_Device" not in APPROVED_PIDRAY_LABELS
     assert all("_" not in label for label in APPROVED_PIDRAY_LABELS)
     assert all(is_approved_label(label) for label in APPROVED_PIDRAY_LABELS)
+
+
+def test_sixray_labels_are_formal_approved_labels():
+    assert APPROVED_SIXRAY_LABELS == (
+        "Gun",
+        "Knife",
+        "Wrench",
+        "Pliers",
+        "Scissors",
+        "Hammer",
+    )
+    assert all(label in APPROVED_FORMAL_LABELS for label in APPROVED_SIXRAY_LABELS)
+    assert all(is_approved_label(label) for label in APPROVED_SIXRAY_LABELS)
+    assert canonical_label("gun") == "Gun"
+    assert canonical_label("scissors") == "Scissors"
 
 
 def test_underscore_and_case_aliases_resolve_to_approved_labels():

@@ -71,13 +71,14 @@ def test_conflicting_annotation_edits_for_same_bbox_are_reported() -> None:
     assert "image_000:bbox-a" in result.summary["conflicts"]
 
 
-def test_new_annotation_label_must_be_approved_pidray_label() -> None:
+def test_new_annotation_label_must_be_approved_formal_label() -> None:
     assert validate_new_box_label("Backpack") == "Backpack"
+    assert validate_new_box_label("Gun") == "Gun"
 
     try:
         validate_new_box_label("Electrical_Device")
     except ValueError as exc:
-        assert "approved PIDRay" in str(exc)
+        assert "approved formal" in str(exc)
     else:
         raise AssertionError("Expected invalid label to be rejected")
 

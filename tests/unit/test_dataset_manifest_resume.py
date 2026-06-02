@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import pytest
 
+from xray_curation.domain.operations import PendingChange
 from xray_curation.gui.app import (
     partition_id_from_dropdown_value,
     partition_size_from_manifest,
     partition_values_from_manifest,
+    pending_operation_blocking_message,
     should_handle_save_shortcut,
     startup_partition_index,
 )
@@ -69,6 +71,23 @@ def test_startup_partition_prefers_existing_selection_then_generated_crops() -> 
 def test_ctrl_s_save_shortcut_is_disabled_while_modal_dialog_is_active() -> None:
     assert should_handle_save_shortcut(modal_dialog_active=False) is True
     assert should_handle_save_shortcut(modal_dialog_active=True) is False
+
+
+def test_setup_operations_are_blocked_by_pending_changes() -> None:
+    pending = [
+        PendingChange(
+            change_id="relabel:crop-1",
+            target_id="crop-1",
+            operation="relabel",
+            payload={"label": "Belt"},
+        )
+    ]
+
+    assert pending_operation_blocking_message([], "generating crops") is None
+    assert (
+        pending_operation_blocking_message(pending, "generating crops")
+        == "Save or cancel 1 pending change(s) before running generating crops."
+    )
 
 
 @pytest.mark.parametrize(
