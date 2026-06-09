@@ -432,6 +432,8 @@ Select a crop, then use:
 
 Changes are staged first. They are written to annotation JSON only when you save pending changes.
 
+The crop browser defaults to `Status = active`, so saved soft-deletes are removed from the visible browser total. Switch the status filter to `All` or `soft_deleted` when you want to audit or restore soft-deleted crops.
+
 ### 9. Manage Classes
 
 Open the right-side `Classes` tab to see the available class labels:

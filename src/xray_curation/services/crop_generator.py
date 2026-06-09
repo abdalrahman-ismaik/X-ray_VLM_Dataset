@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
 from pathlib import Path
 
 from xray_curation.config import DEFAULT_PARTITION_SIZE, DatasetConfig
@@ -123,6 +124,55 @@ def _generate_crop_records_for_images(
     }
 
 
+def _path_key(path: Path) -> str:
+    return os.path.normcase(str(path.resolve(strict=False)))
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _remove_unreferenced_crop_files(crop_dir: Path, manifest: dict) -> dict[str, int]:
+    crop_root = crop_dir.resolve(strict=False)
+    if not crop_root.exists():
+        return {
+            "orphan_crop_files_removed": 0,
+            "orphan_crop_bytes_removed": 0,
+        }
+
+    referenced_paths: set[str] = set()
+    for crop in manifest_crop_records(manifest):
+        raw_path = str(crop.get("crop_path", "")).strip()
+        if not raw_path:
+            continue
+        path = Path(raw_path).resolve(strict=False)
+        if _is_relative_to(path, crop_root):
+            referenced_paths.add(_path_key(path))
+
+    removed_count = 0
+    removed_bytes = 0
+    for candidate in crop_root.rglob("*.png"):
+        if not candidate.is_file():
+            continue
+        resolved = candidate.resolve(strict=False)
+        if not _is_relative_to(resolved, crop_root):
+            continue
+        if _path_key(resolved) in referenced_paths:
+            continue
+        removed_bytes += candidate.stat().st_size
+        candidate.unlink()
+        removed_count += 1
+
+    return {
+        "orphan_crop_files_removed": removed_count,
+        "orphan_crop_bytes_removed": removed_bytes,
+    }
+
+
 def generate_crops_for_partition(
     dataset_root: str | Path,
     partition_id: str,
@@ -165,6 +215,17 @@ def generate_crops_for_partition(
         "crop_dir": str(crop_dir),
     }
     crop_manifest = build_crop_manifest(partition_id, crop_records, summary)
+    if warnings:
+        summary.update(
+            {
+                "orphan_crop_files_removed": 0,
+                "orphan_crop_bytes_removed": 0,
+                "orphan_crop_cleanup_skipped": "generation warnings present",
+            }
+        )
+    else:
+        summary.update(_remove_unreferenced_crop_files(crop_dir, crop_manifest))
+    crop_manifest["summary"] = summary
     manifest_path = write_crop_manifest(config.root, partition_id, crop_manifest)
     summary["crop_manifest_path"] = str(manifest_path)
     result = OperationResult(

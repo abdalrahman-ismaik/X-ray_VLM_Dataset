@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -68,10 +69,14 @@ from xray_curation.services.validation import (
 
 ALL_CLASSES = "All Classes"
 ALL_STATUS = "All"
+STATUS_ACTIVE = "active"
+STATUS_SOFT_DELETED = "soft_deleted"
+DEFAULT_STATUS_FILTER = STATUS_ACTIVE
 REVIEW_UNAPPROVED = "Unapproved"
 REVIEW_APPROVED = "Approved"
 REVIEW_ALL = "All"
 REVIEW_FILTER_VALUES = (REVIEW_UNAPPROVED, REVIEW_ALL, REVIEW_APPROVED)
+STATUS_FILTER_VALUES = (STATUS_ACTIVE, ALL_STATUS, STATUS_SOFT_DELETED)
 THUMBNAIL_PAGE_SIZE = 120
 THUMBNAIL_CARD_WIDTH = 132
 THUMBNAIL_CARD_HEIGHT = 112
@@ -106,6 +111,8 @@ Right panel list
 The Crops table shows all generated items in the image currently open in Image Viewer. The Class, Status, and Search filters still control the browser thumbnails and Previous/Next crop navigation across the selected partition.
 
 Right-panel crop actions use selected browser thumbnails when you are in Image Browser. If no browser thumbnails are selected, they use the selected row in the Crops table.
+
+The Status filter defaults to active, so saved soft-deleted crops disappear from the browser count. Switch Status to All or soft_deleted when you intentionally want to audit or restore deleted crops.
 
 What Soft Delete means
 
@@ -179,6 +186,14 @@ def review_filter_mode(value: str) -> str:
     return REVIEW_FILTER_UNAPPROVED
 
 
+def default_status_filter() -> str:
+    return DEFAULT_STATUS_FILTER
+
+
+def status_filter_values() -> tuple[str, ...]:
+    return STATUS_FILTER_VALUES
+
+
 def should_open_viewer_for_tree_selection(
     requested_open_viewer: bool,
     programmatic_selection: bool,
@@ -193,6 +208,10 @@ def save_pending_refresh_options() -> dict[str, bool]:
         "focus_active_browser_item": False,
         "load_selected_context": False,
     }
+
+
+def save_pending_tab_restore_delays() -> tuple[int, ...]:
+    return (0, 75, 200)
 
 
 def browser_selected_crop_ids(items: list[dict]) -> tuple[str, ...]:
@@ -405,12 +424,19 @@ def right_panel_width(
 
 
 class SavePendingOverlay:
-    def __init__(self, parent: tk.Widget, initial_status: str) -> None:
+    def __init__(
+        self,
+        parent: tk.Widget,
+        initial_status: str,
+        on_close: Callable[[], None] | None = None,
+    ) -> None:
         self.parent = parent
         self.root = parent.winfo_toplevel()
         self._animation_id: str | None = None
         self._animation_step = 0
         self._base_title = "Saving pending changes"
+        self._on_close = on_close
+        self._closed = False
 
         self.backdrop = tk.Toplevel(parent)
         self.backdrop.withdraw()
@@ -539,6 +565,9 @@ class SavePendingOverlay:
         self.window.lift(self.backdrop)
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         if self._animation_id is not None:
             try:
                 self.window.after_cancel(self._animation_id)
@@ -551,6 +580,10 @@ class SavePendingOverlay:
                     window.destroy()
             except tk.TclError:
                 pass
+        if self._on_close is not None:
+            self._on_close()
+            for delay in save_pending_tab_restore_delays():
+                self.parent.after(delay, self._on_close)
 
 
 class CropBrowser(ttk.Frame):
@@ -558,7 +591,7 @@ class CropBrowser(ttk.Frame):
         super().__init__(master, padding=(0, 8, 0, 0))
         self.state = state
         self.label_var = tk.StringVar(value=ALL_CLASSES)
-        self.status_var = tk.StringVar(value=ALL_STATUS)
+        self.status_var = tk.StringVar(value=default_status_filter())
         self.review_var = tk.StringVar(value=REVIEW_UNAPPROVED)
         self.query_var = tk.StringVar(value="")
         self.custom_labels: tuple[str, ...] = ()
@@ -848,7 +881,7 @@ class CropBrowser(ttk.Frame):
         ttk.Combobox(
             filters,
             textvariable=self.status_var,
-            values=(ALL_STATUS, "active", "soft_deleted"),
+            values=status_filter_values(),
             state="readonly",
         ).grid(row=1, column=1, sticky="ew", padx=(6, 0), pady=(6, 0))
         ttk.Label(filters, text="Review").grid(row=2, column=0, sticky="w", pady=(6, 0))
@@ -2092,14 +2125,18 @@ class CropBrowser(ttk.Frame):
     def save_pending(self) -> None:
         self._save_pending()
 
-    def _start_save_overlay(self, status: str) -> SavePendingOverlay:
+    def _start_save_overlay(
+        self,
+        status: str,
+        on_close: Callable[[], None] | None = None,
+    ) -> SavePendingOverlay:
         if self._save_overlay is not None:
             try:
                 if self._save_overlay.window.winfo_exists():
                     self._save_overlay.close()
             except tk.TclError:
                 pass
-        self._save_overlay = SavePendingOverlay(self, status)
+        self._save_overlay = SavePendingOverlay(self, status, on_close=on_close)
         return self._save_overlay
 
     def _show_save_issue_overlay(self, title: str, errors: list[str] | tuple[str, ...], fallback: str) -> None:
@@ -2137,11 +2174,13 @@ class CropBrowser(ttk.Frame):
         partition_id = self.state.partition_id
         selected_bbox_id = self.state.selected_bbox_id
         active_workspace_tab = self.workspace_tabs.select()
+        restore_active_workspace_tab = lambda: self._restore_workspace_tab(active_workspace_tab)
         self.state.worker_status = "saving_pending"
         self.state.worker_progress = 0
         self.status_var_message.set("Saving pending changes...")
         overlay = self._start_save_overlay(
-            f"Applying {len(changes)} pending change(s). Writing annotation JSON atomically, then refreshing affected crops."
+            f"Applying {len(changes)} pending change(s). Writing annotation JSON atomically, then refreshing affected crops.",
+            on_close=restore_active_workspace_tab,
         )
 
         def work():
@@ -2198,7 +2237,7 @@ class CropBrowser(ttk.Frame):
             self.status_var_message.set(summary_text)
             self.annotation_editor.reload_active_image(selected_bbox_id=selected_bbox_id)
             self.refresh(**save_pending_refresh_options())
-            self._restore_workspace_tab(active_workspace_tab)
+            restore_active_workspace_tab()
             overlay.show_result(
                 "Save Pending Complete",
                 f"{summary_text}\nPending queue cleared and the active image was reloaded.",

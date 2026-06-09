@@ -14,13 +14,16 @@ from xray_curation.gui.crop_browser import (
     crop_id_after_navigation,
     crop_row_to_select_after_refresh,
     crops_for_active_image,
+    default_status_filter,
     navigation_anchor_after_crop_selection,
     right_panel_width,
     review_filter_mode,
     save_pending_refresh_options,
+    save_pending_tab_restore_delays,
     save_pending_issue_message,
     save_pending_success_message,
     should_open_viewer_for_tree_selection,
+    status_filter_values,
     unique_crop_row_id,
 )
 from xray_curation.services.review_state import (
@@ -88,6 +91,13 @@ def test_review_filter_mode_defaults_to_unapproved() -> None:
     assert review_filter_mode("unexpected") == REVIEW_FILTER_UNAPPROVED
 
 
+def test_status_filter_defaults_to_active_remaining_work() -> None:
+    assert default_status_filter() == "active"
+    assert status_filter_values()[0] == "active"
+    assert "All" in status_filter_values()
+    assert "soft_deleted" in status_filter_values()
+
+
 def test_programmatic_filter_selection_does_not_force_viewer_tab() -> None:
     assert should_open_viewer_for_tree_selection(True, False) is True
     assert should_open_viewer_for_tree_selection(True, True) is False
@@ -101,6 +111,14 @@ def test_save_pending_refresh_does_not_force_viewer_context() -> None:
         "focus_active_browser_item": False,
         "load_selected_context": False,
     }
+
+
+def test_save_pending_ok_close_restores_original_tab_after_late_tk_events() -> None:
+    delays = save_pending_tab_restore_delays()
+
+    assert delays[0] == 0
+    assert list(delays) == sorted(delays)
+    assert delays[-1] >= 100
 
 
 def test_browser_selected_ids_keep_order_and_ignore_wrong_item_types() -> None:
