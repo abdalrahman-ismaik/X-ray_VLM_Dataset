@@ -26,7 +26,7 @@ The GUI opens maximized by default. The main review area is split into two works
 4. Select one partition, such as `part-0001`.
 5. Click `Generate Crops` for the selected partition, or `Resume` if crops already exist.
 6. After crops load, the Dataset and Partition controls collapse automatically to give the main review area more space.
-7. Use `Image Browser` to browse crop thumbnails, or source-image thumbnails before crops exist. Each browser page shows up to 120 thumbnails with vertical scrolling, and `Previous Page` / `Next Page` moves through the full filtered list. Ctrl/Shift-click selects multiple browser items for bulk class moves, soft-delete, restore, approve, or unapprove.
+7. Use `Image Browser` to browse crop thumbnails, or source-image thumbnails before crops exist. Each browser page shows up to 120 thumbnails with vertical scrolling, and `Previous Page` / `Next Page` moves through the full filtered list. Ctrl-click toggles individual thumbnails; Shift-click selects a continuous row-major range for bulk class moves, soft-delete, restore, approve, or unapprove.
 8. Use the `Image Browser` zoom slider to enlarge thumbnails and reduce the number of images per row.
 9. Double-click an image in `Image Browser`, or select a crop from the table, to open `Image Viewer`.
 10. `Image Viewer` contains only the source image preview with Annotation Editor tools and the selected crop preview.
@@ -391,7 +391,7 @@ Use the crop browser to:
 - browse crop/source thumbnails in the vertical `Image Browser` grid
 - use `Previous Page` and `Next Page` to move through the full browser result set, with a maximum of 120 thumbnails rendered per page
 - use the browser zoom slider to enlarge thumbnails and reduce the number of images per row
-- Ctrl/Shift-click browser thumbnails to select multiple generated crops for bulk move, soft-delete, or restore
+- Ctrl-click browser thumbnails to toggle individual generated crops; Shift-click to select a continuous row-major range for bulk move, soft-delete, or restore
 - double-click a browser image to open it in `Image Viewer`
 - open the full source preview
 

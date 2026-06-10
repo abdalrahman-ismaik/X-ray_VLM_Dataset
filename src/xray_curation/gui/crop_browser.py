@@ -89,6 +89,8 @@ SAVE_PENDING_OVERLAY_LOADING_MIN_HEIGHT = 170
 SAVE_PENDING_OVERLAY_RESULT_MIN_HEIGHT = 220
 RIGHT_PANEL_RATIO = 0.2
 RIGHT_PANEL_MIN_WIDTH = 220
+TK_SHIFT_MASK = 0x0001
+TK_CONTROL_MASK = 0x0004
 GUI_HOW_TO_TEXT = """Typical workflow
 
 1. Choose a dataset root and select one partition.
@@ -110,7 +112,7 @@ Right panel list
 
 The Crops table shows all generated items in the image currently open in Image Viewer. The Class, Status, and Search filters still control the browser thumbnails and Previous/Next crop navigation across the selected partition.
 
-Right-panel crop actions use selected browser thumbnails when you are in Image Browser. If no browser thumbnails are selected, they use the selected row in the Crops table.
+Right-panel crop actions use selected browser thumbnails when you are in Image Browser. Ctrl-click toggles one thumbnail. Shift-click selects the visible row-major range from the last clicked thumbnail to the clicked thumbnail. If no browser thumbnails are selected, right-panel crop actions use the selected row in the Crops table.
 
 The Status filter defaults to active, so saved soft-deleted crops disappear from the browser count. Switch Status to All or soft_deleted when you intentionally want to audit or restore deleted crops.
 
@@ -240,6 +242,44 @@ def browser_selected_source_image_ids(items: list[dict]) -> tuple[str, ...]:
         image_ids.append(image_id)
         seen.add(image_id)
     return tuple(image_ids)
+
+
+def browser_item_ids(items: list[dict]) -> tuple[str, ...]:
+    return tuple(str(item.get("item_id", "")) for item in items if str(item.get("item_id", "")))
+
+
+def browser_range_selection_ids(
+    visible_items: list[dict],
+    anchor_item_id: str | None,
+    clicked_item_id: str,
+) -> set[str]:
+    visible_ids = browser_item_ids(visible_items)
+    if anchor_item_id not in visible_ids or clicked_item_id not in visible_ids:
+        return {clicked_item_id}
+    start = visible_ids.index(anchor_item_id)
+    end = visible_ids.index(clicked_item_id)
+    if start > end:
+        start, end = end, start
+    return set(visible_ids[start : end + 1])
+
+
+def browser_selection_after_thumbnail_click(
+    selected_item_ids: set[str],
+    visible_items: list[dict],
+    clicked_item_id: str,
+    anchor_item_id: str | None,
+    event_state: int,
+) -> tuple[set[str], str | None]:
+    if event_state & TK_SHIFT_MASK:
+        return browser_range_selection_ids(visible_items, anchor_item_id, clicked_item_id), clicked_item_id
+    if event_state & TK_CONTROL_MASK:
+        updated = set(selected_item_ids)
+        if clicked_item_id in updated:
+            updated.remove(clicked_item_id)
+        else:
+            updated.add(clicked_item_id)
+        return updated, clicked_item_id
+    return {clicked_item_id}, clicked_item_id
 
 
 def crop_id_after_navigation(
@@ -389,13 +429,16 @@ def centered_window_position(
     parent_height: int,
     window_width: int,
     window_height: int,
-    screen_width: int,
-    screen_height: int,
+    screen_width: int | None = None,
+    screen_height: int | None = None,
+    clamp_to_primary_screen: bool = False,
 ) -> tuple[int, int]:
     width = max(1, window_width)
     height = max(1, window_height)
     x = parent_x + max(0, parent_width - width) // 2
     y = parent_y + max(0, parent_height - height) // 2
+    if not clamp_to_primary_screen or screen_width is None or screen_height is None:
+        return x, y
     max_x = max(0, screen_width - width)
     max_y = max(0, screen_height - height)
     return max(0, min(x, max_x)), max(0, min(y, max_y))
@@ -611,6 +654,7 @@ class CropBrowser(ttk.Frame):
         self._thumbnail_photos: list[ImageTk.PhotoImage] = []
         self._thumbnail_hitboxes: list[tuple[float, float, float, float, dict]] = []
         self._browser_selected_item_ids: set[str] = set()
+        self._browser_selection_anchor_item_id: str | None = None
         self._browser_page_index = 0
         self._tree_crop_ids: dict[str, str] = {}
         self._navigation_anchor_crop_id: str | None = None
@@ -848,6 +892,7 @@ class CropBrowser(ttk.Frame):
         self._thumbnail_photos = []
         self._thumbnail_hitboxes = []
         self._browser_selected_item_ids = set()
+        self._browser_selection_anchor_item_id = None
         self._browser_page_index = 0
         self._tree_crop_ids = {}
         self._navigation_anchor_crop_id = None
@@ -1222,6 +1267,8 @@ class CropBrowser(ttk.Frame):
         self._browser_all_items = items
         valid_ids = {str(item.get("item_id", "")) for item in items}
         self._browser_selected_item_ids.intersection_update(valid_ids)
+        if self._browser_selection_anchor_item_id not in valid_ids:
+            self._browser_selection_anchor_item_id = None
         active_item_index = None
         if active_kind is not None and active_id:
             for index, item in enumerate(self._browser_all_items):
@@ -1442,14 +1489,16 @@ class CropBrowser(ttk.Frame):
             self._clear_browser_selection()
             return
         item_id = str(item.get("item_id", ""))
-        multi_select = bool(event.state & 0x0005)
-        if multi_select:
-            if item_id in self._browser_selected_item_ids:
-                self._browser_selected_item_ids.remove(item_id)
-            else:
-                self._browser_selected_item_ids.add(item_id)
-        else:
-            self._browser_selected_item_ids = {item_id}
+        (
+            self._browser_selected_item_ids,
+            self._browser_selection_anchor_item_id,
+        ) = browser_selection_after_thumbnail_click(
+            self._browser_selected_item_ids,
+            self._thumbnail_items,
+            item_id,
+            self._browser_selection_anchor_item_id,
+            int(getattr(event, "state", 0)),
+        )
         self._update_browser_selection_status()
         self._render_thumbnail_grid()
 
@@ -1550,6 +1599,7 @@ class CropBrowser(ttk.Frame):
 
     def _clear_browser_selection(self) -> None:
         self._browser_selected_item_ids = set()
+        self._browser_selection_anchor_item_id = None
         self._update_browser_selection_status()
         self._render_thumbnail_grid()
 
@@ -1565,7 +1615,7 @@ class CropBrowser(ttk.Frame):
         if selected_count:
             self.browser_selection_var.set(f"{selected_count} selected | {count_text}")
         elif shown_count:
-            self.browser_selection_var.set(f"{count_text} | Ctrl/Shift-click for multi-select")
+            self.browser_selection_var.set(f"{count_text} | Ctrl-click toggles; Shift-click selects range")
         else:
             self.browser_selection_var.set("No browser item selected.")
 
@@ -1674,6 +1724,7 @@ class CropBrowser(ttk.Frame):
         action = "Approved" if approved else "Unapproved"
         total = len(crop_ids) + len(image_ids)
         self._browser_selected_item_ids = set()
+        self._browser_selection_anchor_item_id = None
         if self.state.crop_manifest:
             self.refresh(
                 select_first=False,
@@ -1929,6 +1980,7 @@ class CropBrowser(ttk.Frame):
     def _on_select(self, _event=None, open_viewer: bool = True) -> None:
         if _event is not None and not self._programmatic_tree_selection:
             self._browser_selected_item_ids = set()
+            self._browser_selection_anchor_item_id = None
             self._update_browser_selection_status()
             self._render_thumbnail_grid()
         open_viewer = should_open_viewer_for_tree_selection(

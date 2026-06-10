@@ -5,6 +5,8 @@ from xray_curation.gui.crop_browser import (
     browser_page_count,
     browser_page_for_item_index,
     browser_page_slice,
+    browser_range_selection_ids,
+    browser_selection_after_thumbnail_click,
     browser_selected_crop_ids,
     browser_selected_source_image_ids,
     browser_grid_position,
@@ -134,6 +136,43 @@ def test_browser_selected_ids_keep_order_and_ignore_wrong_item_types() -> None:
     assert browser_selected_source_image_ids(items) == ("image-2",)
 
 
+def test_browser_shift_selection_uses_visible_row_major_range() -> None:
+    items = [{"item_id": f"item-{index}"} for index in range(8)]
+
+    assert browser_range_selection_ids(items, "item-2", "item-5") == {
+        "item-2",
+        "item-3",
+        "item-4",
+        "item-5",
+    }
+    assert browser_range_selection_ids(items, "item-5", "item-2") == {
+        "item-2",
+        "item-3",
+        "item-4",
+        "item-5",
+    }
+
+
+def test_thumbnail_click_selection_modes_match_shift_and_ctrl_expectations() -> None:
+    items = [{"item_id": f"item-{index}"} for index in range(5)]
+
+    selected, anchor = browser_selection_after_thumbnail_click(set(), items, "item-1", None, 0)
+    assert selected == {"item-1"}
+    assert anchor == "item-1"
+
+    selected, anchor = browser_selection_after_thumbnail_click(selected, items, "item-3", anchor, 0x0004)
+    assert selected == {"item-1", "item-3"}
+    assert anchor == "item-3"
+
+    selected, anchor = browser_selection_after_thumbnail_click(selected, items, "item-1", anchor, 0x0004)
+    assert selected == {"item-3"}
+    assert anchor == "item-1"
+
+    selected, anchor = browser_selection_after_thumbnail_click(selected, items, "item-4", anchor, 0x0001)
+    assert selected == {"item-1", "item-2", "item-3", "item-4"}
+    assert anchor == "item-4"
+
+
 def test_browser_page_count_keeps_120_items_per_page() -> None:
     assert browser_page_count(0) == 0
     assert browser_page_count(120) == 1
@@ -191,7 +230,7 @@ def test_browser_page_update_can_preserve_page_after_save_pending() -> None:
     )
 
 
-def test_centered_window_position_keeps_dialog_inside_screen() -> None:
+def test_centered_window_position_centers_over_parent_window() -> None:
     assert centered_window_position(
         parent_x=100,
         parent_y=100,
@@ -211,6 +250,30 @@ def test_centered_window_position_keeps_dialog_inside_screen() -> None:
         window_height=250,
         screen_width=1920,
         screen_height=1080,
+    ) == (1750, 925)
+    assert centered_window_position(
+        parent_x=-1600,
+        parent_y=120,
+        parent_width=1200,
+        parent_height=800,
+        window_width=420,
+        window_height=240,
+        screen_width=1920,
+        screen_height=1080,
+    ) == (-1210, 400)
+
+
+def test_centered_window_position_can_still_clamp_to_primary_screen_when_requested() -> None:
+    assert centered_window_position(
+        parent_x=1700,
+        parent_y=900,
+        parent_width=500,
+        parent_height=300,
+        window_width=400,
+        window_height=250,
+        screen_width=1920,
+        screen_height=1080,
+        clamp_to_primary_screen=True,
     ) == (1520, 830)
 
 
