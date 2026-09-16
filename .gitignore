@@ -17,6 +17,7 @@ venv/
 .env.*
 
 # Local development workflow files
+/AGENTS.md
 /.agents/skills/
 /.specify/
 /specs/

@@ -60,10 +60,9 @@ in the committed GitHub repository.
 
 ## Local development files
 
-The owner subsequently chose to keep `.agents/skills/`, `.specify/`, and `specs/`
-as local development resources. They are now Git-ignored and removed from
-tracking, with their local files preserved. Public documentation no longer links
-to them, and `AGENTS.md` treats the local plan as optional. Earlier commits still
-contain the previously tracked files.
+The owner subsequently chose to keep `AGENTS.md`, `.agents/skills/`, `.specify/`,
+and `specs/` as local development resources. They are now Git-ignored and removed
+from tracking, with their local files preserved. Public documentation no longer
+links to them. Earlier commits still contain the previously tracked files.
 
 No license, remote repository settings, or application behavior was changed.
