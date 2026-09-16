@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="350" viewBox="0 0 1200 350" role="img" aria-labelledby="title description">
+  <title id="title">X-ray VLM Dataset Curation</title>
+  <desc id="description">A terminal-inspired introduction to the local X-ray annotation workflow: browse, annotate, review, and save.</desc>
+  <rect width="1200" height="350" rx="16" fill="#0b1220"/>
+  <path d="M0 56H1200" stroke="#26394b"/>
+  <g font-family="Consolas, 'Liberation Mono', monospace" font-size="16">
+    <text x="34" y="35" fill="#58dfce">&gt;_</text>
+    <text x="77" y="35" fill="#b9cbd8">xray-curation / workspace</text>
+    <text x="1166" y="35" text-anchor="end" fill="#8eacbf">LOCAL DESKTOP</text>
+  </g>
+  <g font-family="'Segoe UI', Arial, sans-serif">
+    <text x="38" y="143" font-size="68" font-weight="700" letter-spacing="-2" fill="#f2f7fb">X-ray VLM</text>
+    <text x="38" y="205" font-size="50" font-weight="400" letter-spacing="-1" fill="#58dfce">Dataset Curation</text>
+    <text x="41" y="247" font-size="20" fill="#b9cbd8">Inspect the image. Refine the annotation.</text>
+  </g>
+  <path d="M755 95V259" stroke="#26394b"/>
+  <g font-family="Consolas, 'Liberation Mono', monospace" font-size="21">
+    <text x="793" y="122" fill="#b9cbd8">workflow = [</text>
+    <text x="821" y="158" fill="#58dfce">"browse", "annotate",</text>
+    <text x="821" y="194" fill="#58dfce">"review", "save"</text>
+    <text x="793" y="230" fill="#b9cbd8">]</text>
+  </g>
+  <rect x="24" y="280" width="1152" height="48" rx="8" fill="#152333"/>
+  <g font-family="Consolas, 'Liberation Mono', monospace" font-size="18">
+    <text x="42" y="310" fill="#58dfce">$</text>
+    <text x="65" y="310" fill="#edf5fa">python run_gui.py --dataset dataset<tspan fill="#58dfce"> █</tspan></text>
+    <text x="1157" y="310" text-anchor="end" fill="#8eacbf">Python 3.11+ / Tkinter</text>
+  </g>
+</svg>

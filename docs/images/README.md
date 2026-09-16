@@ -1,4 +1,32 @@
-# GUI screenshots
+# README visuals
+
+## Animated walkthrough
+
+The [GIF](gui-demo.gif) and [MP4](gui-demo.mp4) show a real session of the
+Tkinter application at commit `5944b88`, recorded on Windows on 2026-09-16.
+The silent, looping GIF is 960 × 540 at 10 fps (about 2.2 MB); the sharper
+1440 × 810 MP4 is 20 fps (about 1.9 MB). Both run for 20 seconds.
+
+The walkthrough browses crops, filters by class, opens a linked image and crop,
+zooms in, resizes a bounding box, reviews the pending edit, and saves it.
+The application then refreshes the affected crops and clears the pending queue.
+Capture pauses during the save worker, so that waiting time is omitted.
+
+This session used a disposable copy of eight paired X-ray images and annotation
+files. The sample resize was saved only in that copy. Hash checks confirmed that
+the original sample images and annotations were unchanged. The demonstration
+illustrates the controls, not a validated labeling decision.
+
+Frames were captured directly from the application window. HyperFrames added
+the numbered captions and terminal-style text reveals above the recording;
+FFmpeg encoded the MP4 and optimized the GIF. No app controls or results were
+fabricated. Temporary recordings, composition files, and tooling stay outside
+the repository.
+
+The [terminal header](readme-header.svg) is a lightweight static vector banner.
+Its typography, command prompt, and workflow text remain sharp when scaled.
+
+## Still screenshots
 
 These PNG files are actual captures of the Tkinter application at commit
 `80b2d48`, taken on Windows on 2026-09-16. They are captured directly from the

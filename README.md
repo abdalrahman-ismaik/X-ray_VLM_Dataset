@@ -1,10 +1,39 @@
-# X-ray VLM Dataset Curation
+<h1 align="center">X-ray VLM Dataset Curation</h1>
 
-A local desktop application for reviewing X-ray images, editing bounding boxes, and organizing labeled crops for VLM and object-detection research. Built with Python, Tkinter, and Pillow, with a workflow designed around one dataset partition at a time.
+<p align="center">
+  <img src="docs/images/readme-header.svg" alt="Terminal-style banner: inspect the image, refine the annotation; browse, annotate, review, and save" width="1200">
+</p>
 
-[Quick start](#quick-start) · [GUI screenshots](#gui-screenshots) · [Workflow guide](docs/gui-guide.md) · [Repository layout](#repository-layout) · [Development](#development)
+<p align="center">
+  <strong>One workspace for images, bounding boxes, and crop review.</strong><br>
+  A local desktop workflow for X-ray VLM and object-detection datasets.
+</p>
+
+<p align="center">
+  <code>Python 3.11+</code> &nbsp; <code>Tkinter + Pillow</code> &nbsp; <code>Windows</code>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
+  <a href="#see-it-in-action">Watch the demo</a> &nbsp;·&nbsp;
+  <a href="docs/gui-guide.md">Workflow guide</a> &nbsp;·&nbsp;
+  <a href="#development">Development</a>
+</p>
+
+## See It in Action
+
+**Browse → inspect → edit → review → save.** A 20-second walkthrough of the actual app, using a disposable eight-image dataset copy.
+
+[![Animated GUI walkthrough showing crop filtering, linked image inspection, zoom, bounding-box resizing, pending review, and saving](docs/images/gui-demo.gif)](docs/images/gui-demo.mp4)
+
+[Watch or download the sharper MP4](docs/images/gui-demo.mp4) · 20 seconds, silent · GIF 2.2 MB / MP4 1.9 MB · [View still screenshots](#gui-screenshots)
+
+The demo saves a sample box adjustment and refreshes its crops. Original research files remain unchanged. [Capture notes](docs/images/README.md)
 
 ## GUI Screenshots
+
+<details>
+<summary>Explore four full-resolution screenshots</summary>
 
 These are captures of the running Windows application using a temporary eight-image dataset copy. The examples show browsing, linked bounding boxes and crops, class management, and an unsaved annotation edit. Original dataset files were unchanged during capture.
 
@@ -20,8 +49,7 @@ Inspect the source image with labeled bounding boxes alongside the selected crop
 
 ![Image Viewer showing three bounding boxes on an X-ray image and a linked crop preview](docs/images/annotation-editor.png)
 
-<details>
-<summary>View class management and pending changes</summary>
+### Class Management and Pending Changes
 
 **Classes:** browse built-in labels and add dataset-specific custom classes.
 
@@ -111,11 +139,11 @@ X-ray_VLM_Dataset/
     integration/             Fixture-based workflows
     fixtures/                Small committed test datasets
   docs/                      User and developer documentation
-    images/                  README screenshots and capture notes
+    images/                  README banner, demo, screenshots, and capture notes
   dataset/                   Local research data (Git-ignored)
 ```
 
-The application creates derived state inside `<dataset>/curation/`: dataset and crop manifests, partition state, review progress, generated crops, and operation logs. Raw datasets and generated artifacts stay out of Git; the small test fixtures and documentation screenshots are intentional exceptions.
+The application creates derived state inside `<dataset>/curation/`: dataset and crop manifests, partition state, review progress, generated crops, and operation logs. Raw datasets and generated artifacts stay out of Git; the small test fixtures and documentation visuals are intentional exceptions.
 
 ## Documentation
 
