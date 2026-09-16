@@ -22,13 +22,13 @@
 
 ## See It in Action
 
-**Browse → inspect → edit → review → save.** A 20-second walkthrough of the actual app, using a disposable eight-image dataset copy.
+**Browse → filter → approve → inspect → edit → save.** A 40-second walkthrough of the actual app, using a disposable 20-image dataset copy.
 
-[![Animated GUI walkthrough showing crop filtering, linked image inspection, zoom, bounding-box resizing, pending review, and saving](docs/images/gui-demo.gif)](docs/images/gui-demo.mp4)
+[![Animated GUI walkthrough showing Box crops in Image Browser, scrolling, Unapproved filtering, batch approval, Approved results, linked image inspection, zoom, bounding-box resizing, and saving](docs/images/gui-demo.gif)](docs/images/gui-demo.mp4)
 
-[Watch or download the sharper MP4](docs/images/gui-demo.mp4) · 20 seconds, silent · GIF 2.2 MB / MP4 1.9 MB · [View still screenshots](#gui-screenshots)
+[Watch or download the sharper MP4](docs/images/gui-demo.mp4) · 40 seconds, silent · GIF 6.1 MB / MP4 5.5 MB · [View still screenshots](#gui-screenshots)
 
-The demo saves a sample box adjustment and refreshes its crops. Original research files remain unchanged. [Capture notes](docs/images/README.md)
+The demo starts in **Image Browser** with the **Box** class, scrolls through its crops, applies **Unapproved** (pending review), approves two batches, and shows the six **Approved** crops in the same class. It then opens a linked image, zooms in, resizes a box, reviews the pending edit, and saves. Original research files remain unchanged. [Capture notes](docs/images/README.md)
 
 ## GUI Screenshots
 

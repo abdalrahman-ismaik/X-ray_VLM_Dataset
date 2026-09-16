@@ -3,18 +3,26 @@
 ## Animated walkthrough
 
 The [GIF](gui-demo.gif) and [MP4](gui-demo.mp4) show a real session of the
-Tkinter application at commit `5944b88`, recorded on Windows on 2026-09-16.
-The silent, looping GIF is 960 × 540 at 10 fps (about 2.2 MB); the sharper
-1440 × 810 MP4 is 20 fps (about 1.9 MB). Both run for 20 seconds.
+Tkinter application at commit `81a986d`, recorded on Windows on 2026-09-16.
+The silent, looping GIF is 960 × 540 at 10 fps (about 6.1 MB); the sharper
+1440 × 810 MP4 is 20 fps (about 5.5 MB). Both run for 40 seconds.
 
-The walkthrough browses crops, filters by class, opens a linked image and crop,
-zooms in, resizes a bounding box, reviews the pending edit, and saves it.
+The walkthrough starts in Image Browser with the Box class and scrolls down
+through its crops. It applies Unapproved, the app's pending-review filter,
+selects and approves two batches of three crops, then switches to Approved to
+show those six crops in the same class. Approval is saved immediately to the
+temporary partition's review state; it does not change annotation labels.
+
+The recording then returns to Unapproved, opens a linked image and crop,
+zooms in, resizes a bounding box, reviews the pending annotation edit, and saves it.
 The application then refreshes the affected crops and clears the pending queue.
-Capture pauses during the save worker, so that waiting time is omitted.
+Capture pauses during the save worker, so that waiting time is omitted. Six
+brief blank redraw frames are held on adjacent, unaltered application captures.
 
-This session used a disposable copy of eight paired X-ray images and annotation
-files. The sample resize was saved only in that copy. Hash checks confirmed that
-the original sample images and annotations were unchanged. The demonstration
+This session used a disposable copy of 20 paired X-ray images and annotation
+files, containing 46 Box crops. The approvals and sample resize were saved only
+in that copy. Hash checks confirmed that the original sample images and
+annotations were unchanged. The demonstration
 illustrates the controls, not a validated labeling decision.
 
 Frames were captured directly from the application window. HyperFrames added
