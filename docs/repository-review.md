@@ -43,10 +43,11 @@ in the committed GitHub repository.
   (pytest 9.1.1, Pillow 12.3.0).
 - Source and wrapper compile checks passed, and `run_gui.py --help` worked from
   the fresh environment.
-- All 29 local links and anchors in the README and documentation resolved.
+- All 29 local links and anchors in the README and documentation resolved at
+  the initial screenshot review.
   All four PNG screenshots decoded at 1880 x 980 and were visually inspected.
-- Every restored file matched its Git index content. This documentation update
-  changes only the README and the new documentation assets.
+- Every restored file matched its Git index content. The screenshot update
+  changed only the README and the new documentation assets.
 
 ## Remaining housekeeping
 
@@ -57,6 +58,12 @@ in the committed GitHub repository.
 | Empty GitHub description and topics | Add a short desktop-curation description and relevant topics such as `xray`, `annotation-tool`, `tkinter`, and `dataset-curation`. |
 | Large GUI module | `gui/crop_browser.py` is roughly 2,500 lines. Consider extracting focused views when changing that area; the existing service/domain split is useful. |
 
-The project-specific `.agents/`, `.specify/`, and `specs/` folders are referenced
-by the development workflow and are not disposable cache folders. No license,
-remote repository settings, or application behavior was changed by this review.
+## Local development files
+
+The owner subsequently chose to keep `.agents/skills/`, `.specify/`, and `specs/`
+as local development resources. They are now Git-ignored and removed from
+tracking, with their local files preserved. Public documentation no longer links
+to them, and `AGENTS.md` treats the local plan as optional. Earlier commits still
+contain the previously tracked files.
+
+No license, remote repository settings, or application behavior was changed.

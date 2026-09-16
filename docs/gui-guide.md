@@ -4,10 +4,7 @@ For installation and screenshots, see the [project README](../README.md). Run al
 
 This project provides a local desktop workflow for cleaning and organizing X-ray image annotations for VLM and object-detection research. It refactors the original `GUI_Dataset` scripts into a structured Python package with a Tkinter GUI, reusable services, partitioned crop generation, stable crop identity, and approved formal label standardization for PIDRay/SIXray-style datasets.
 
-The refactor is based on the requirements in [spec.md](../specs/001-dataset-curation-refactor/spec.md).
-
-The project constitution is in [.specify/memory/constitution.md](../.specify/memory/constitution.md).
-It requires future refactors to preserve core legacy GUI workflows, including
+Future refactors should preserve core legacy GUI workflows, including
 source-image browsing, drawing new bounding boxes, assigning labels, selecting
 and editing boxes, deleting boxes through a reviewable path, saving annotation
 edits, and refreshing affected crops.
@@ -197,7 +194,6 @@ X-ray_VLM_Dataset/
   src/xray_curation/
   tests/
   docs/
-  specs/
   dataset/
     images/
     json/

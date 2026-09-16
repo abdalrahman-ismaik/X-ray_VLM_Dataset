@@ -16,13 +16,18 @@ venv/
 .env
 .env.*
 
+# Local development workflow files
+/.agents/skills/
+/.specify/
+/specs/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db
 
 # Dataset policy
 # Keep large research data and generated curation artifacts local.
-# Commit code, specs, docs, and tests; do not commit raw images, raw JSON batches,
+# Commit code, docs, and tests; do not commit raw images, raw JSON batches,
 # generated crops, partition manifests, operation logs, or dataset zip exports.
 *.zip
 dataset/

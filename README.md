@@ -112,9 +112,6 @@ X-ray_VLM_Dataset/
     fixtures/                Small committed test datasets
   docs/                      User and developer documentation
     images/                  README screenshots and capture notes
-  specs/                     Feature specifications and implementation plans
-  .specify/                  Project constitution and Spec Kit configuration
-  .agents/skills/            Project automation instructions
   dataset/                   Local research data (Git-ignored)
 ```
 
@@ -126,8 +123,6 @@ The application creates derived state inside `<dataset>/curation/`: dataset and 
 - [GUI smoke tests](docs/gui-smoke-tests.md): manual regression checks.
 - [Bounding-box identity](docs/bbox-identity.md): how annotations stay linked to crops.
 - [Legacy migration notes](docs/legacy-migration.md) and [compatibility wrappers](GUI_Dataset/README.md).
-- [Annotation editor plan](specs/002-annotation-editor/plan.md) and [original refactor specification](specs/001-dataset-curation-refactor/spec.md).
-- [Project constitution](.specify/memory/constitution.md): data integrity and architecture requirements.
 - [Repository review](docs/repository-review.md): organization checks and outstanding housekeeping.
 
 ## Development
